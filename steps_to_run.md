@@ -3,16 +3,16 @@
 ## Set Up
 cd ~/racelab/model_splitting
 
-* import torch:
-conda create -n racelab python=3.11
-conda activate racelab
+* import torch:\
+conda create -n racelab python=3.11\
+conda activate racelab\
 pip install torch torchvision pillow
 
-* deactivate .venv prompt
+* deactivate .venv prompt\
 deactivate
 
-* run script
-conda activate racelab [prompt should be: (racelab) (base)]
+* run script\
+conda activate racelab [prompt should be: (racelab) (base)]\
 python3 no_splitting_inf.py
 
 
