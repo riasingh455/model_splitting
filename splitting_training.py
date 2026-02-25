@@ -278,7 +278,7 @@ def set_one_core_behavior():
 # -------------------------
 
 def worker(rank: int, world_size: int, master_port: str):
-    setup_dist(rank, world_size, master_addr="127.0.0.1", master_port="29501")
+    setup_dist(rank, world_size, master_addr="127.0.0.1", master_port="29502")
     set_one_core_behavior()
 
     # Use a simpler transform (more stable than ImageNet normalize for random data)
@@ -362,7 +362,7 @@ def worker(rank: int, world_size: int, master_port: str):
 def main():
     mp.set_start_method("spawn", force=True)
     world_size = 8
-    master_port = "29501"  # any free port is fine
+    master_port = "29502"  # any free port is fine
     mp.spawn(worker, args=(world_size, master_port), nprocs=world_size, join=True)
     # mp.set_start_method("spawn", force=True)
     # world_size = 2
