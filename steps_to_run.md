@@ -56,6 +56,6 @@ Finished 16 steps in 56.39s
 
 
 #command to run the pipeline splitting file - torch run inference
-torchrun --standalone --nproc_per_node=2 one_file.py \
+torchrun --nproc_per_node=2 pipeline_splitting_inf.py \
   --image "/Users/riasingh/cnn test/bear.jpeg" \
   --stages 2
