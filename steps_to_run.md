@@ -52,3 +52,10 @@ step 05  loss=2.2351\
 step 10  loss=2.3318\
 step 15  loss=2.4282\
 Finished 16 steps in 56.39s
+
+
+
+#command to run the pipeline splitting file - torch run inference
+torchrun --standalone --nproc_per_node=2 one_file.py \
+  --image "/Users/riasingh/cnn test/bear.jpeg" \
+  --stages 2
