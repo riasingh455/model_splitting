@@ -1,0 +1,44 @@
+#commands for pipeline splitting (rank0 is on Person A machine, rank1 is on Person B machine)
+
+# Person A command
+
+export MASTER_ADDR=192.168.99.175
+export MASTER_PORT=29601
+export GLOO_SOCKET_IFNAME=en0
+export TP_SOCKET_IFNAME=en0
+export GLOO_USE_IPV6=0
+
+python -m torch.distributed.run \
+  --nnodes=2 \
+  --nproc_per_node=1 \
+  --node_rank=0 \
+  --rdzv_backend=c10d \
+  --rdzv_endpoint=${MASTER_ADDR}:${MASTER_PORT} \
+  --rdzv_id=demo1 \
+  pipeline_splitting_inf.py \
+  --stages 2 \
+  --image "/Users/riasingh/cnn test/bear.jpeg" \
+  --iters 20 \
+  --warmup 1
+
+
+
+# Person B commmand
+
+export MASTER_ADDR=192.168.99.175
+export MASTER_PORT=29601
+export GLOO_SOCKET_IFNAME=en0
+export TP_SOCKET_IFNAME=en0
+export GLOO_USE_IPV6=0
+
+python -m torch.distributed.run \
+  --nnodes=2 \
+  --nproc_per_node=1 \
+  --node_rank=1 \
+  --rdzv_backend=c10d \
+  --rdzv_endpoint=${MASTER_ADDR}:${MASTER_PORT} \
+  --rdzv_id=demo1 \
+  pipeline_splitting_inf.py \
+  --stages 2 \
+  --iters 20 \
+  --warmup 1
