@@ -59,3 +59,14 @@ Finished 16 steps in 56.39s
 torchrun --nproc_per_node=2 pipeline_splitting_inf.py \
   --image "/Users/riasingh/cnn test/bear.jpeg" \
   --stages 2
+
+
+#on two machines pipeline (godzilla pi version)
+
+#main node (node rank 0) -> aka the node tgat runs the first part of the split model and assigns the second part to the worker node
+torchrun --nnodes 2 --nproc-per-node 1 --node-rank 0 --master-addr bramble-4-1-2 --master-port 8123 pipeline_splitting_inf.py --stages 2 --image bear.jpeg
+
+
+#worker node (node_rank 1)-> aka the node that runs the second part of the split model
+torchrun --nnodes 2 --nproc-per-node 1 --node-rank 1 --master-addr bramble-4-1-2 --master-port 8123 pipeline_splitting_inf.py --stages 2 --image bear.jpeg
+
