@@ -11,7 +11,9 @@ import torch.nn.functional as F
 
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader, Subset
-from torch.fx.passes.split_module import split_module
+# from torch.fx.passes.split_module import split_module
+from torch.distributed.pipelining import pipeline, SplitPoint
+
 from torch.utils.flop_counter import FlopCounterMode
 
 import torch.distributed as dist
@@ -23,9 +25,9 @@ from typing import Any, Dict, List
 torch.manual_seed(3)
 np.random.seed(3)
 
-def set_one_core_behavior():
-    torch.set_num_threads(1)
-    torch.set_num_interop_threads(1)
+def set_core_behavior(n:int=1):
+    torch.set_num_threads(n)
+    torch.set_num_interop_threads(n)
 
 @dataclass
 class DataWrap:
@@ -66,7 +68,7 @@ class DataWrap:
 @dataclass 
 class GenModel:
     model: nn.Module
-    split_model: Dict[int, nn.Module]
+    # split_model: Dict[int, nn.Module]
     device: torch.device
     total_flops = 0
 
@@ -116,37 +118,29 @@ class GenModel:
         model.fc = nn.Linear(num_features, num)
         self.model = model
 
-    def split(self, rank:int, split_num:int = 2, specific_chunks:List[int] = []):
-        traced = torch.fx.symbolic_trace(self.model)
-        nodes = [n for n in traced.graph.nodes if n.op not in ['placeholder', 'output']]
-        if split_num > len(nodes):
-            split_num = len(nodes)
-        num_nodes = len(nodes)
+    def split(self, example_input:Any, rank:int, split_num:int = 2, specific_chunks:List[int] = []):
+        #use split policy/spec to implement specific chunks?
+        #limits to top-level layers only -> anything below and we need module instead of children here
+        #don't really see why it can't be modules/graph modules?
+        split_model = {k:v for k,v in self.model.named_children()}
+        if split_num > len(split_model):
+            split_num = len(split_model)
         
-        sizes = [num_nodes // split_num + (1 if i < num_nodes % split_num else 0) for i in range(split_num)] if len(specific_chunks)==0 else specific_chunks
-        acc_sizes = np.cumsum(sizes)
-        #TODO add flop counter here?
-        def split_callback(node):
-            if node.op == 'placeholder': return 0
-            if node.op == 'output': return split_num - 1
-            
-            try:
-                idx = nodes.index(node)
-                node_idx = split_num - 1
-                for t_ind, t in enumerate(acc_sizes):
-                    if idx < t:
-                        node_idx = t_ind
-                        break
-                return node_idx
-            except ValueError:
-                return 0
+        sizes = [len(split_model) // split_num + (1 if i < len(split_model) % split_num else 0) for i in range(split_num)] if len(specific_chunks)==0 else specific_chunks
+        split_spec = {}
+        split_names = list(split_model.keys())
+        r=0
+        counter=0
+        while r+sizes[counter] < len(split_model):
+            temp_key = split_names[r+sizes[counter]]
+            split_spec[temp_key] = SplitPoint.END
+            r+=sizes[counter]
+        if split_names[-1] not in split_spec:
+            split_spec[split_names[-1]] = SplitPoint.END
 
-        split_gm = split_module(traced, self.model, split_callback)
-        self.split_model = {int(k.split("_")[-1]): v for k,v in split_gm.named_children()}
-        #somewhat forced Garbage Collection
-        # print(self.split_model)
-        self.model = self.split_model[rank]
-        self.split_model={}
+        pipe = pipeline(self.model, mb_args=(example_input,), split_spec=split_spec )
+        self.model = pipe.get_stage_module(rank)
+        #can implement compile or jit here potentially to further speed up inference
     
     def load_image_tensor(self, path: str, preprocess: Any) -> torch.Tensor:
         #weights = ResNet18_Weights.DEFAULT
@@ -168,7 +162,9 @@ class GenModel:
 @dataclass
 class FBModel(GenModel):
     
-    def pipeline_inference(self, backend, world, rank, warmup, iters, x0=None):
+    def pipeline_inference(self, world, rank, warmup, iters, x0=None):
+        #TODO eventually replace with CustomSchedule and CustomSteps
+
         #essentially the main from pipeline_splitting_inf.py
         #we include assumed rank from args to garbage collect the rest of the model quickly
         total_start = 0
@@ -176,7 +172,6 @@ class FBModel(GenModel):
         #rank = args.assigned_rank
         next_rank = rank+1
         prev_rank = rank-1
-        dist.init_process_group(backend=backend)
         stage=self.model.to(self.device).eval()
         stage_start = 0
         with torch.inference_mode():
@@ -227,7 +222,7 @@ class FBModel(GenModel):
         print(f"Time (timed iters) stages={world} iters={iters}, rank={rank} : {stage_elapsed:.4f} s")
         print(f"Avg latency per image stages={world} iters={iters}, rank={rank} : {(stage_elapsed/max(1,iters))*1000:.2f} ms")
         print(f"FLOP count stages={world} iters={iters}, rank={rank}, warmup={warmup} : {self.total_flops} ")
-        print(f"FLOP s/op rate stages={world} iters={iters}, rank={rank}, warmup={warmup} : {(stage_elapsed/(max(1,warmup)*self.total_flops))*10**9} Gs/op")
+        print(f"FLOP s/op rate stages={world} iters={iters}, rank={rank}, warmup={warmup} : {(stage_elapsed/(max(1,warmup)*max(1,self.total_flops)))*10**9} Gs/op")
         if rank == world-1:
             total_end = time.perf_counter()
             elapsed = total_end - total_start
@@ -240,7 +235,6 @@ class FBModel(GenModel):
         #if rank == world - 1 and outputs is not None:
         #    print(f"[rank {rank}] pred {self.top1_label(outputs)}")
 
-        dist.destroy_process_group()
         return outputs
 
     def train_model(self, train_loader: Any, lr=1e-3, num_epochs:int=10):
