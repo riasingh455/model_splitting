@@ -11,6 +11,7 @@ import torch.nn.functional as F
 
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader, Subset
+from torch.fx.passes.split_module import split_module
 
 import torch.distributed as dist
 
@@ -112,35 +113,45 @@ class GenModel:
         num_features = model.fc.in_features
         model.fc = nn.Linear(num_features, num)
         self.model = model
-    
-    def split(self, rank:int, split_num:int = 2, split_layers:List[List[str]] = []):
-        #splits model sequentially 
-        #if split not even, main node takes additional split
-        l = split_num if len(split_layers) == 0 else len(split_layers)
-        state_dict = {k:v for k,v in self.model.named_modules() if k!=''}
-        counter=0
-        for k in range(l):
-            temp_list=[]
-            l_names = list(state_dict.keys())
-            for l_ind in range(counter, len(state_dict)):
-                l_name = l_names[l_ind]
-                if (len(split_layers)==0 and l_ind > counter+np.ceil(len(state_dict)/l)) or (len(split_layers)!=0 and l_name not in split_layers[k]):
-                    break
-                if len(split_layers)==0 or l_name in split_layers[k]:
-                    temp_list.append(state_dict[l_name])
-            counter=len(temp_list) 
-            self.split_model[k] = nn.Sequential(*temp_list)
+
+    def split(self, rank:int, split_num:int = 2, specific_chunks:List[int] = []):
+        traced = torch.fx.symbolic_trace(self.model)
+        nodes = [n for n in traced.graph.nodes if n.op not in ['placeholder', 'output']]
+        if split_num > len(nodes):
+            split_num = len(nodes)
+        num_nodes = len(nodes)
         
+        sizes = [num_nodes // split_num + (1 if i < num_nodes % split_num else 0) for i in range(split_num)] if len(specific_chunks)==0 else specific_chunks
+        acc_sizes = np.cumsum(sizes)
+        #TODO add flop counter here?
+        def split_callback(node):
+            if node.op == 'placeholder': return 0
+            if node.op == 'output': return split_num - 1
+            
+            try:
+                idx = nodes.index(node)
+                node_idx = split_num - 1
+                for t_ind, t in enumerate(acc_sizes):
+                    if idx < t:
+                        node_idx = t_ind
+                        break
+                return node_idx
+            except ValueError:
+                return 0
+
+        split_gm = split_module(traced, self.model, split_callback)
+        self.split_model = {int(k.split("_")[-1]): v for k,v in split_gm.named_children()}
         #somewhat forced Garbage Collection
+        # print(self.split_model)
         self.model = self.split_model[rank]
         self.split_model={}
     
-    def load_image_tensor(self, path: str, preprocess: Any, device: torch.device) -> torch.Tensor:
+    def load_image_tensor(self, path: str, preprocess: Any) -> torch.Tensor:
         #weights = ResNet18_Weights.DEFAULT
         #preprocess = weights.transforms()
 
         img = Image.open(path).convert("RGB")
-        x = preprocess(img).unsqueeze(0).to(device)  # [1,3,224,224]
+        x = preprocess(img).unsqueeze(0).to(self.device)  # [1,3,224,224]
         return x
 
     def top1_label(self, categories:Any, logits: torch.Tensor) -> str:
@@ -163,8 +174,8 @@ class FBModel(GenModel):
         #rank = args.assigned_rank
         next_rank = rank+1
         prev_rank = rank-1
-        stage=self.model
         dist.init_process_group(backend=backend)
+        stage=self.model.to(self.device).eval()
 
         with torch.inference_mode():
             for i in range(warmup + iters):
@@ -175,15 +186,7 @@ class FBModel(GenModel):
                     dist.barrier()
 
                 if rank == 0:
-                    y = stage(x0)
-                    if next_rank < world:
-                        # send y to next stage
-                        # header: ndim, then (shape..., dtypecode)
-                        dist.send(torch.tensor([y.dim()], dtype=torch.int64), dst=next_rank)
-                        dist.send(torch.tensor([*y.shape, self.dtype_to_code(y.dtype)], dtype=torch.int64), dst=next_rank)
-                        dist.send(y.contiguous(), dst=next_rank)
-                    else:
-                        outputs = y
+                    x=x0
                 else:
                     # recv from prev
                     ndim_t = torch.empty(1, dtype=torch.int64)
@@ -197,25 +200,23 @@ class FBModel(GenModel):
 
                     x = torch.empty(shape, dtype=dtype, device=self.device)
                     dist.recv(x, src=prev_rank)
-
-                    y = stage(x)
-
-                    if next_rank < world:
-                        dist.send(torch.tensor([y.dim()], dtype=torch.int64), dst=next_rank)
-                        dist.send(torch.tensor([*y.shape, self.dtype_to_code(y.dtype)], dtype=torch.int64), dst=next_rank)
-                        dist.send(y.contiguous(), dst=next_rank)
-                    else:
-                        outputs = y
+                y=stage(x)
+                if next_rank < world:
+                    dist.send(torch.tensor([y.dim()], dtype=torch.int64), dst=next_rank)
+                    dist.send(torch.tensor([*y.shape, self.dtype_to_code(y.dtype)], dtype=torch.int64), dst=next_rank)
+                    dist.send(y.contiguous(), dst=next_rank)
+                else:
+                    outputs = y
 
         dist.barrier()
-        if rank == 0:
+        if rank == world-1:
             total_end = time.perf_counter()
             elapsed = total_end - total_start
             avg = elapsed / max(1, iters)
-            print(f"\n--- Pipeline Inference (stages={world}, iters={iters}) ---")
+            print(f"\n--- Pipeline Inference (stages={world}, iters={iters}, rank={rank}) ---")
             print(f"Total time (timed iters): {elapsed:.4f} s")
             print(f"Avg latency per image: {avg*1000:.2f} ms")
-            print("Note: Single-image pipeline mostly demonstrates partitioning, not big speedups.")
+            # print("Note: Single-image pipeline mostly demonstrates partitioning, not big speedups.")
 
         #if rank == world - 1 and outputs is not None:
         #    print(f"[rank {rank}] pred {self.top1_label(outputs)}")

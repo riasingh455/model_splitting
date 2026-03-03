@@ -153,7 +153,7 @@ def maybe_pin_to_core(rank: int):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--image", type=str, default="bear.png")
+    parser.add_argument("--image", type=str, default="bear.jpeg")
     parser.add_argument("--stages", type=int, default=2, choices=[2, 3])
     parser.add_argument("--device", type=str, default="cpu", choices=["cpu"])
     parser.add_argument("--warmup", type=int, default=3)
