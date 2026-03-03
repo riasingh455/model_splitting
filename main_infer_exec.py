@@ -42,6 +42,7 @@ if __name__ == "__main__":
     world = dist.get_world_size()
     example_input = torch.randn(1, 3, 224, 224)
     pipe_mod.split(example_input, rank, world)
+    # pipe_mod.split(rank, world)
 
     x0=None
     l = 1 if len(args.images)==0 else len(args.images)

@@ -11,8 +11,8 @@ import torch.nn.functional as F
 
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader, Subset
-# from torch.fx.passes.split_module import split_module
-from torch.distributed.pipelining import pipeline, SplitPoint
+from torch.fx.passes.split_module import split_module
+from torch.distributed.pipelining import pipeline, SplitPoint, PipelineStage
 
 from torch.utils.flop_counter import FlopCounterMode
 
@@ -118,10 +118,68 @@ class GenModel:
         model.fc = nn.Linear(num_features, num)
         self.model = model
 
-    def split(self, example_input:Any, rank:int, split_num:int = 2, specific_chunks:List[int] = []):
+    def split(self, example_input, rank:int, split_num:int = 2, specific_chunks:List[int] = []):
         #use split policy/spec to implement specific chunks?
         #limits to top-level layers only -> anything below and we need module instead of children here
         #don't really see why it can't be modules/graph modules?
+        
+        #forcefully add the stupid flatten layer
+        # children = []
+        # for k, v in self.model.named_children():
+        #     if k.startswith("fc"):
+        #         children.append(["flat", nn.Flatten(1)])
+        #     children.append([k ,v])
+
+        # split_model = {k:v for k,v in children}
+        # if split_num > len(split_model):
+        #     split_num = len(split_model)
+        
+        # sizes = [len(split_model) // split_num + (1 if i < len(split_model) % split_num else 0) for i in range(split_num)] if len(specific_chunks)==0 else specific_chunks
+        # r=0
+        # counter=0
+        # split_names = list(split_model.keys())
+        # split_model = {}
+        # while r < len(split_model):
+        #     temp_key = split_names[r+sizes[counter]]
+        #     split_spec[temp_key] = SplitPoint.END
+        #     r+=sizes[counter]
+
+        # if split_names[-1] not in split_spec:
+        #     split_spec[split_names[-1]] = SplitPoint.END
+
+        #Same problem as before, can't trace when more than one input to next layer :/
+        # traced = torch.fx.symbolic_trace(self.model)
+        # nodes = [n for n in traced.graph.nodes if n.op not in ['placeholder', 'output']]
+        # if split_num > len(nodes):
+        #     split_num = len(nodes)
+        # num_nodes = len(nodes)
+        
+        # sizes = [num_nodes // split_num + (1 if i < num_nodes % split_num else 0) for i in range(split_num)] if len(specific_chunks)==0 else specific_chunks
+        # acc_sizes = np.cumsum(sizes)
+        # #TODO add flop counter here?
+        # def split_callback(node):
+        #     if node.op == 'placeholder': return 0
+        #     if node.op == 'output': return split_num - 1
+            
+        #     try:
+        #         idx = nodes.index(node)
+        #         node_idx = split_num - 1
+        #         for t_ind, t in enumerate(acc_sizes):
+        #             if idx < t:
+        #                 node_idx = t_ind
+        #                 break
+        #         return node_idx
+        #     except ValueError:
+        #         return 0
+
+        # split_gm = split_module(traced, self.model, split_callback)
+        # self.split_model = {int(k.split("_")[-1]): v for k,v in split_gm.named_children()}
+        # #somewhat forced Garbage Collection
+        # # print(self.split_model)
+        # self.model = PipelineStage(self.split_model[rank], rank, split_num, self.device)
+        # self.split_model={}
+
+        #Using default pipeline too memory heavy?
         split_model = {k:v for k,v in self.model.named_children()}
         if split_num > len(split_model):
             split_num = len(split_model)
@@ -131,10 +189,11 @@ class GenModel:
         split_names = list(split_model.keys())
         r=0
         counter=0
-        while r+sizes[counter] < len(split_model):
+        while counter < len(sizes) and r+sizes[counter] < len(split_model):
             temp_key = split_names[r+sizes[counter]]
             split_spec[temp_key] = SplitPoint.END
             r+=sizes[counter]
+            counter+=1
         if split_names[-1] not in split_spec:
             split_spec[split_names[-1]] = SplitPoint.END
 
@@ -172,7 +231,7 @@ class FBModel(GenModel):
         #rank = args.assigned_rank
         next_rank = rank+1
         prev_rank = rank-1
-        stage=self.model.to(self.device).eval()
+        stage=self.model#.to(self.device).eval()
         stage_start = 0
         with torch.inference_mode():
             for i in range(warmup + iters):
@@ -218,7 +277,6 @@ class FBModel(GenModel):
         stage_end = time.perf_counter()
         stage_elapsed = (stage_end - stage_start) if rank!=0 else (stage_end - total_start)
         print(f"\n--- Pipeline Inference (stages={world}, iters={iters}, rank={rank}) ---")
-        print(f"Time (timed iters) stages={world} iters={iters}, rank={rank} : {stage_elapsed:.4f} s")
         print(f"Time (timed iters) stages={world} iters={iters}, rank={rank} : {stage_elapsed:.4f} s")
         print(f"Avg latency per image stages={world} iters={iters}, rank={rank} : {(stage_elapsed/max(1,iters))*1000:.2f} ms")
         print(f"FLOP count stages={world} iters={iters}, rank={rank}, warmup={warmup} : {self.total_flops} ")
