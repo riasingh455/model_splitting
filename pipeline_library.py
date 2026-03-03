@@ -124,28 +124,28 @@ class GenModel:
         #don't really see why it can't be modules/graph modules?
         
         #forcefully add the stupid flatten layer
-        # children = []
-        # for k, v in self.model.named_children():
-        #     if k.startswith("fc"):
-        #         children.append(["flat", nn.Flatten(1)])
-        #     children.append([k ,v])
+        children = []
+        for k, v in self.model.named_children():
+            if k.startswith("fc"):
+                children.append(["flat", nn.Flatten(1)])
+            children.append([k ,v])
 
-        # split_model = {k:v for k,v in children}
-        # if split_num > len(split_model):
-        #     split_num = len(split_model)
+        split_model = {k:v for k,v in children}
+        if split_num > len(split_model):
+            split_num = len(split_model)
         
-        # sizes = [len(split_model) // split_num + (1 if i < len(split_model) % split_num else 0) for i in range(split_num)] if len(specific_chunks)==0 else specific_chunks
-        # r=0
-        # counter=0
-        # split_names = list(split_model.keys())
-        # split_model = {}
-        # while r < len(split_model):
-        #     temp_key = split_names[r+sizes[counter]]
-        #     split_spec[temp_key] = SplitPoint.END
-        #     r+=sizes[counter]
+        sizes = [len(split_model) // split_num + (1 if i < len(split_model) % split_num else 0) for i in range(split_num)] if len(specific_chunks)==0 else specific_chunks
+        r=0
+        counter=0
+        split_names = list(split_model.keys())
+        splits = {}
+        while counter < len(sizes):
+            if len(split_names[r:r+sizes[counter]]) > 0:
+                splits[counter] = nn.Sequential(*[ split_model[m] for m in split_names[r:r+sizes[counter]]])
+            r+=sizes[counter]
+            counter+=1
 
-        # if split_names[-1] not in split_spec:
-        #     split_spec[split_names[-1]] = SplitPoint.END
+        self.model = splits[rank]
 
         #Same problem as before, can't trace when more than one input to next layer :/
         # traced = torch.fx.symbolic_trace(self.model)
@@ -180,25 +180,25 @@ class GenModel:
         # self.split_model={}
 
         #Using default pipeline too memory heavy?
-        split_model = {k:v for k,v in self.model.named_children()}
-        if split_num > len(split_model):
-            split_num = len(split_model)
+        # split_model = {k:v for k,v in self.model.named_children()}
+        # if split_num > len(split_model):
+        #     split_num = len(split_model)
         
-        sizes = [len(split_model) // split_num + (1 if i < len(split_model) % split_num else 0) for i in range(split_num)] if len(specific_chunks)==0 else specific_chunks
-        split_spec = {}
-        split_names = list(split_model.keys())
-        r=0
-        counter=0
-        while counter < len(sizes) and r+sizes[counter] < len(split_model):
-            temp_key = split_names[r+sizes[counter]]
-            split_spec[temp_key] = SplitPoint.END
-            r+=sizes[counter]
-            counter+=1
-        if split_names[-1] not in split_spec:
-            split_spec[split_names[-1]] = SplitPoint.END
+        # sizes = [len(split_model) // split_num + (1 if i < len(split_model) % split_num else 0) for i in range(split_num)] if len(specific_chunks)==0 else specific_chunks
+        # split_spec = {}
+        # split_names = list(split_model.keys())
+        # r=0
+        # counter=0
+        # while counter < len(sizes) and r+sizes[counter] < len(split_model):
+        #     temp_key = split_names[r+sizes[counter]]
+        #     split_spec[temp_key] = SplitPoint.END
+        #     r+=sizes[counter]
+        #     counter+=1
+        # if split_names[-1] not in split_spec:
+        #     split_spec[split_names[-1]] = SplitPoint.END
 
-        pipe = pipeline(self.model, mb_args=(example_input,), split_spec=split_spec )
-        self.model = pipe.get_stage_module(rank)
+        # pipe = pipeline(self.model, mb_args=(example_input,), split_spec=split_spec )
+        # self.model = pipe.get_stage_module(rank)
         #can implement compile or jit here potentially to further speed up inference
     
     def load_image_tensor(self, path: str, preprocess: Any) -> torch.Tensor:
