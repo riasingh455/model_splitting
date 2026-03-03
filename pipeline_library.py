@@ -12,6 +12,7 @@ import torch.nn.functional as F
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader, Subset
 from torch.fx.passes.split_module import split_module
+from torch.utils.flop_counter import FlopCounterMode
 
 import torch.distributed as dist
 
@@ -67,6 +68,7 @@ class GenModel:
     model: nn.Module
     split_model: Dict[int, nn.Module]
     device: torch.device
+    total_flops = 0
 
     def dtype_to_code(self, dt: torch.dtype):
         # small mapping to send dtype as int
@@ -176,7 +178,7 @@ class FBModel(GenModel):
         prev_rank = rank-1
         dist.init_process_group(backend=backend)
         stage=self.model.to(self.device).eval()
-
+        stage_start = 0
         with torch.inference_mode():
             for i in range(warmup + iters):
                 if i == warmup and rank == 0:
@@ -184,6 +186,7 @@ class FBModel(GenModel):
                     total_start = time.perf_counter()
                 elif i == warmup:
                     dist.barrier()
+                    stage_start = time.perf_counter()
 
                 if rank == 0:
                     x=x0
@@ -200,7 +203,15 @@ class FBModel(GenModel):
 
                     x = torch.empty(shape, dtype=dtype, device=self.device)
                     dist.recv(x, src=prev_rank)
-                y=stage(x)
+                y=[]
+                if i == warmup-1:
+                    flop_counter = FlopCounterMode(mods=stage, display=False, depth=None)
+                    with flop_counter:
+                            y=stage(x)
+                    self.total_flops +=  flop_counter.get_total_flops()
+                else:
+                    y=stage(x)
+                
                 if next_rank < world:
                     dist.send(torch.tensor([y.dim()], dtype=torch.int64), dst=next_rank)
                     dist.send(torch.tensor([*y.shape, self.dtype_to_code(y.dtype)], dtype=torch.int64), dst=next_rank)
@@ -209,19 +220,27 @@ class FBModel(GenModel):
                     outputs = y
 
         dist.barrier()
+        stage_end = time.perf_counter()
+        stage_elapsed = (stage_end - stage_start) if rank!=0 else (stage_end - total_start)
+        print(f"\n--- Pipeline Inference (stages={world}, iters={iters}, rank={rank}) ---")
+        print(f"Time (timed iters) stages={world} iters={iters}, rank={rank} : {stage_elapsed:.4f} s")
+        print(f"Time (timed iters) stages={world} iters={iters}, rank={rank} : {stage_elapsed:.4f} s")
+        print(f"Avg latency per image stages={world} iters={iters}, rank={rank} : {(stage_elapsed/max(1,iters))*1000:.2f} ms")
+        print(f"FLOP count stages={world} iters={iters}, rank={rank}, warmup={warmup} : {self.total_flops} ")
+        print(f"FLOP s/op rate stages={world} iters={iters}, rank={rank}, warmup={warmup} : {(stage_elapsed/(max(1,warmup)*self.total_flops))*10**9} Gs/op")
         if rank == world-1:
             total_end = time.perf_counter()
             elapsed = total_end - total_start
             avg = elapsed / max(1, iters)
-            print(f"\n--- Pipeline Inference (stages={world}, iters={iters}, rank={rank}) ---")
-            print(f"Total time (timed iters): {elapsed:.4f} s")
-            print(f"Avg latency per image: {avg*1000:.2f} ms")
+            print(f"\n--- Pipeline Inference (stages={world}, iters={iters}) total ---")
+            print(f"Time (timed iters) total: {elapsed:.4f} s")
+            print(f"Avg latency per image total: {avg*1000:.2f} ms")
             # print("Note: Single-image pipeline mostly demonstrates partitioning, not big speedups.")
 
         #if rank == world - 1 and outputs is not None:
         #    print(f"[rank {rank}] pred {self.top1_label(outputs)}")
 
-        #dist.destroy_process_group()
+        dist.destroy_process_group()
         return outputs
 
     def train_model(self, train_loader: Any, lr=1e-3, num_epochs:int=10):
