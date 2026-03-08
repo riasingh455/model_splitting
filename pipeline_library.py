@@ -214,38 +214,39 @@ class GenModel:
         #only fwds
         stage_list = []
         unit_map = {}
-        if split_num==1:
-            temp_stage = CustomStage(pipe.get_stage_module(rank), f"fw_s_{rank}", rank, rank)
-            stage_pipe.add_node(temp_stage)
-            stage_list = [temp_stage]
-            unit_map[rank] = rank
-        else:
-            for s in range(split_num-1):
-                temp_stage = CustomStage(pipe.get_stage_module(s), f"fw_s_{s}", s, s)
-                temp_stage_next = CustomStage(pipe.get_stage_module(s+1), f"fw_s_{s+1}", s+1, s+1)
-                exec_pipe.add_node(temp_stage)
-                exec_pipe.add_node(temp_stage_next)
-                exec_pipe.add_edge(temp_stage, temp_stage_next)
-                #arrival time (proxy with stage for now)
-                unit_map[s]=s
-                unit_map[s+1]=s+1
-                if s == rank:
+        for inp in range(input_count):
+            if split_num==1:
+                temp_stage = CustomStage(pipe.get_stage_module(rank), f"fw_{inp}_s_{rank}", rank, rank)
+                stage_pipe.add_node(temp_stage)
+                stage_list.append(temp_stage)
+                unit_map[rank] = rank
+            else:
+                for s in range(split_num-1):
+                    temp_stage = CustomStage(pipe.get_stage_module(s),  f"fw_{inp}_s_{rank}", s, s)
+                    temp_stage_next = CustomStage(pipe.get_stage_module(s+1),  f"fw_{inp}_s_{rank}", s+1, s+1)
+                    exec_pipe.add_node(temp_stage)
+                    exec_pipe.add_node(temp_stage_next)
+                    exec_pipe.add_edge(temp_stage, temp_stage_next)
+                    #arrival time (proxy with stage for now)
+                    unit_map[s]=s
+                    unit_map[s+1]=s+1
+                    if s == rank:
+                        stage_pipe.add_node(temp_stage)
+                        stage_list.append(temp_stage)
+                        for n in exec_pipe.successors(temp_stage):
+                            stage_pipe.add_edge(temp_stage, n)
+                        for p in exec_pipe.predecessors(temp_stage):
+                            stage_pipe.add_edge(p, temp_stage)
+                
+                #add the last stage
+                if rank == split_num-1:
+                    temp_stage = CustomStage(pipe.get_stage_module(rank),  f"fw_{inp}_s_{rank}", rank, rank)
                     stage_pipe.add_node(temp_stage)
                     stage_list.append(temp_stage)
                     for n in exec_pipe.successors(temp_stage):
                         stage_pipe.add_edge(temp_stage, n)
                     for p in exec_pipe.predecessors(temp_stage):
                         stage_pipe.add_edge(p, temp_stage)
-            
-            #add the last stage
-            if rank == split_num-1:
-                temp_stage = CustomStage(pipe.get_stage_module(rank), f"fw_s_{rank}", rank, rank)
-                stage_pipe.add_node(temp_stage)
-                stage_list.append(temp_stage)
-                for n in exec_pipe.successors(temp_stage):
-                    stage_pipe.add_edge(temp_stage, n)
-                for p in exec_pipe.predecessors(temp_stage):
-                    stage_pipe.add_edge(p, temp_stage)
 
 
 
@@ -390,18 +391,23 @@ class CustomP2PCommunication:
 
             total_units = sorted([i for i in set_units])
             f_str = ""
+            # num = int(unit.split("_")[-1])
+            # unit_commas = ' '.join([',']*num)
+            # f_str = f"{unit_commas}"
+            prev_num = 0
             for unit in total_units:
-                num = int(unit.split("_")[-1])
+                num = int(unit.split("_")[-1]) + int(unit.split("_")[1]) - prev_num
                 unit_commas = ''.join([',']*num)
                 if unit in sorted_fwd_sends:
                     unit_tasks  = "_".join([str(i.src) for i in self.fwd_send_ops[unit]])
                     unit_comms = "_".join([str(i.dst) for i in self.fwd_send_ops[unit]])
-                    f_str += f"{unit_commas}get input+run({unit_tasks})+batch_send_fwd({unit_comms})"
+                    f_str += f"get input+run({unit_tasks})+batch_send_fwd({unit_comms})"
                 if unit in sorted_bwd_recvs:
                     unit_tasks  = "_".join([str(i.src) for i in self.bwd_recv_ops[unit]])
                     unit_comms = "_".join([str(i.dst) for i in self.bwd_recv_ops[unit]])
                     f_str += f"{unit_commas}batch_bwd_recv_block({unit_comms})+run({unit_tasks})"
-
+                prev_num=num
+                f_str+="," #only for rank=0
             f.write(f"{f_str}\n")
             f.close()
 
@@ -421,11 +427,16 @@ class CustomP2PCommunication:
             sorted_bwd_sends = sorted(list(self.bwd_send_ops.keys()))
             total_units = sorted_bwd_recvs + sorted_bwd_sends + sorted_fwd_recvs + sorted_fwd_sends
             total_units = sorted([i for i in set(total_units)])
-            
+            print(total_units)
             f_str = ""
+            # num = int(unit.split("_")[-1])
+            # unit_commas = ' '.join([',']*num)
+            # f_str = f"{unit_commas}"
+            prev_num = 0
             for unit in total_units:
-                num = int(unit.split("_")[-1])
-                unit_commas = ' '.join([',']*num)
+                num = int(unit.split("_")[-1]) + int(unit.split("_")[1])
+                unit_commas = ' '.join([',']*(num-prev_num))
+                print(self.rank, num, prev_num)
                 if unit in sorted_fwd_recvs:
                     unit_tasks = "_".join([str(i.src) for i in self.fwd_recv_ops[unit]])
                     unit_comms = "_".join([str(i.dst) for i in self.fwd_recv_ops[unit]])
@@ -437,12 +448,14 @@ class CustomP2PCommunication:
                 if unit in sorted_bwd_recvs:
                     unit_tasks = "_".join([str(i.src) for i in self.bwd_recv_ops[unit]])
                     unit_comms = "_".join([str(i.dst) for i in self.bwd_recv_ops[unit]])
-                    f_str += f"{unit_commas}batch_bwd_recv_block({unit_comms})+run({unit_tasks})"
+                    f_str += f"batch_bwd_recv_block({unit_comms})+run({unit_tasks})"
                 if unit in sorted_bwd_sends:
                     unit_tasks = "_".join([str(i.src) for i in self.bwd_send_ops[unit]])
                     unit_comms = "_".join([str(i.dst) for i in self.bwd_send_ops[unit]])
                     f_str += f"+batch_send_bwd({unit_comms})"
-                f.write(f"{f_str}\n")
+                prev_num=num
+                # f_str+=","    
+            f.write(f"{f_str}\n")
             f.close()
 
             # if len(sorted_bwd_recvs)>0:
