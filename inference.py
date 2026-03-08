@@ -11,9 +11,11 @@ from torch.distributed.pipelining import SplitPoint, ScheduleGPipe, pipeline
 def load_batch(batch_size: int) -> torch.Tensor:
     weights = ResNet18_Weights.DEFAULT
     preprocess = weights.transforms()
+    #makes sure the images are in the right format for ResNet-18
 
     bear = preprocess(Image.open("bear.jpeg").convert("RGB"))
     penguin = preprocess(Image.open("penguin.jpeg").convert("RGB"))
+    #converts the images to pytorch tensors
 
     images = []
     for i in range(batch_size):
@@ -21,14 +23,16 @@ def load_batch(batch_size: int) -> torch.Tensor:
             images.append(bear)
         else:
             images.append(penguin)
-
     return torch.stack(images)
+#^^ builds the list of images 
+#this function makes a batch of images (input = batch_size) and outputs a tensor containing that many images 
 
 
 def top1_labels(logits: torch.Tensor):
     categories = ResNet18_Weights.DEFAULT.meta["categories"]
     preds = logits.argmax(dim=1).tolist()
     return [f"{idx}: {categories[idx]}" for idx in preds]
+#this function converts raw model outputs into readable class names
 
 
 def get_split_spec(stages: int):
@@ -40,6 +44,7 @@ def get_split_spec(stages: int):
             "layer4": SplitPoint.BEGINNING,
         }
     raise ValueError("stages must be 2 or 3")
+#decides whether to split the model 2 or 3 times and where to split
 
 
 def main():
@@ -50,15 +55,20 @@ def main():
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--iters", type=int, default=10)
     args = parser.parse_args()
+    #arguments to pass in when running the file 
 
     if args.batch_size % args.microbatches != 0:
         raise SystemExit("batch-size must be divisible by microbatches for static-shape GPipe in this script")
 
     microbatch_size = args.batch_size // args.microbatches
+    #determines the size of the microbatch - batch size must be divisible by microbatches
 
-    dist.init_process_group(backend="gloo")
-    rank = dist.get_rank()
-    world = dist.get_world_size()
+    dist.init_process_group(backend="gloo") #this starts the distributed environment - all processes launched by torchrun can join the same group 
+    #gloo is the backend being used here which works on CPU
+
+    rank = dist.get_rank() #rank = which process am I?
+    world = dist.get_world_size() #world = total num of processes 
+    
 
     if world != args.stages:
         if rank == 0:
@@ -67,39 +77,44 @@ def main():
             )
         dist.destroy_process_group()
         return
+    #checks that the total num of processes matches the num of stages 
 
-    device = torch.device("cpu")
-    model = resnet18(weights=ResNet18_Weights.DEFAULT).eval().to(device)
+    device = torch.device("cpu") #script runs on the CPU
+    model = resnet18(weights=ResNet18_Weights.DEFAULT).eval().to(device) #creates pretrained model, puts it in eval mode bc we are doing inference, moves it to CPU
 
-    example_mb = load_batch(microbatch_size).to(device)
+
+    example_mb = load_batch(microbatch_size).to(device) #creates an example microbatch in order to trace the model and learn tensor shapes
 
     pipe = pipeline(
         module=model,
         mb_args=(example_mb,),
         split_spec=get_split_spec(args.stages),
-    )
+    ) #this converts the normal model into a pipelined model - pytorch knows what the model is, the input shape, where to split into stages
 
-    stage = pipe.build_stage(rank, device, dist.group.WORLD)
-    schedule = ScheduleGPipe(stage, n_microbatches=args.microbatches)
+    stage = pipe.build_stage(rank, device, dist.group.WORLD) #give this process its stage 
+    schedule = ScheduleGPipe(stage, n_microbatches=args.microbatches) #creates the GPipe schedule - works by sending microbatches through the stages
 
     x_full = None
     if rank == 0:
         x_full = load_batch(args.batch_size).to(device)
+    #only rank 0 loads the full batch 
 
     timed_output = None
     total_start = None
+    #variables for timing
 
-    with torch.inference_mode():
-        for i in range(args.warmup + args.iters):
+    with torch.inference_mode(): 
+        for i in range(args.warmup + args.iters): #2 warmup iterations (bc first runs are slower bc of initialization) and 10 real timed iterations 
             if i == args.warmup and rank == 0:
-                total_start = time.perf_counter()
+                total_start = time.perf_counter() #start timer when warmup ends 
 
-            if rank == 0:
+            if rank == 0: #rank0 starts the pipeline by giving it the whole batch 
                 schedule.step(x_full)
-            elif rank == world - 1:
+            elif rank == world - 1: #last rank receives the input data from the prev stage. we store final output tensor in timed output 
                 timed_output = schedule.step()
             else:
-                schedule.step()
+                schedule.step() #middle stages just run their stage and pass data along 
+
 
     if rank == 0:
         total_end = time.perf_counter()
@@ -123,8 +138,9 @@ def main():
         print(f"[rank {rank}] predictions:")
         for i, label in enumerate(labels):
             print(f"  sample {i}: {label}")
+    #collecting the data
 
-    dist.destroy_process_group()
+    dist.destroy_process_group() #clean up distributed state
 
 
 if __name__ == "__main__":
