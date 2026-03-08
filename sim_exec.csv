@@ -1,0 +1,5 @@
+get input+run(0)+batch_send_fwd(1)
+,batch_fwd_recv_block(0)+run(1)+batch_send(2)
+, ,batch_fwd_recv_block(1)+run(2)+batch_send(3)
+, , ,batch_fwd_recv_block(2)+run(3)+batch_send(4)
+, , , ,batch_fwd_recv_block(3)+run(4)
