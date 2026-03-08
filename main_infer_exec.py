@@ -41,7 +41,7 @@ if __name__ == "__main__":
     rank = dist.get_rank()
     world = dist.get_world_size()
     example_input = torch.randn(1, 3, 224, 224)
-    pipe_mod.split(example_input, rank, world)
+    pipe_mod.split(example_input, rank, world, input_count=3)
     print(pipe_mod.exec_pipe)
     # pipe_mod.split(rank, world)
     # exit()
