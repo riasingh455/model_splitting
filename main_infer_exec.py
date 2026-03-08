@@ -42,14 +42,16 @@ if __name__ == "__main__":
     world = dist.get_world_size()
     example_input = torch.randn(1, 3, 224, 224)
     pipe_mod.split(example_input, rank, world)
+    print(pipe_mod.exec_pipe)
     # pipe_mod.split(rank, world)
-
+    # exit()
     x0=None
     l = 1 if len(args.images)==0 else len(args.images)
     for _ in range(l):
         if rank==0:
             x0 = pipe_mod.load_image_tensor(args.image, pre_proc) 
-        output = pipe_mod.pipeline_inference(world, rank, args.warmup, args.iters, x0)
+        # output = pipe_mod.pipeline_inference(world, rank, args.warmup, args.iters, x0)
+        output = pipe_mod.custom_pipeline_inf(world, rank)
         if output!=None:
             res = pipe_mod.top1_label(data_labels, output)
             print(res)
