@@ -7,6 +7,7 @@ import networkx as nx
 from tqdm import tqdm
 from datetime import datetime
 
+from custom_classes import CustomP2PCommunication, CustomP2POp, CustomPipeline, CustomStage
 
 import torch 
 import torch.nn as nn
@@ -72,6 +73,7 @@ class GenModel:
     model: nn.Module
     # split_model: Dict[int, nn.Module]
     device: torch.device
+    data_labels: Any
     total_flops = 0
     exec_pipe: CustomPipeline|Any = ""
 
@@ -203,7 +205,26 @@ class GenModel:
         if split_names[-1] not in split_spec:
             split_spec[split_names[-1]] = SplitPoint.END
 
+        # print(split_spec)
         pipe = pipeline(self.model, mb_args=(example_input,), split_spec=split_spec )
+
+        #warmup split
+        #used to find input and output shapes
+        #run on one machine
+        stage_shapes = {}
+        output = torch.empty(1)
+        for s in range(split_num):
+            temp = pipe.get_stage_module(s)
+            if s not in stage_shapes:
+                stage_shapes[s] = [tuple(output.shape), output.dtype]
+            if s == 0:
+                output = temp.forward(example_input)
+            else:
+                output = temp.forward(output)
+        
+        # print(stage_shapes)
+        # exit()
+
         #hard code for now
         #TODO this is where the dag maker code shows up or csv reader whichever is easier
         #input count is number of micro-batches
@@ -214,6 +235,7 @@ class GenModel:
         #only fwds
         stage_list = []
         unit_map = {}
+        # split_num-=1
         for inp in range(input_count):
             if split_num==1:
                 temp_stage = CustomStage(pipe.get_stage_module(rank), f"fw_{inp}_s_{rank}", rank, rank)
@@ -221,9 +243,14 @@ class GenModel:
                 stage_list.append(temp_stage)
                 unit_map[rank] = rank
             else:
+                # print(split_num)
                 for s in range(split_num-1):
-                    temp_stage = CustomStage(pipe.get_stage_module(s),  f"fw_{inp}_s_{rank}", s, s)
-                    temp_stage_next = CustomStage(pipe.get_stage_module(s+1),  f"fw_{inp}_s_{rank}", s+1, s+1)
+                    temp_stage = CustomStage(pipe.get_stage_module(s),  f"fw_{inp}_s_{s}", s, s)
+                    # if s+1 < split_num:
+                    temp_stage_next = CustomStage(pipe.get_stage_module(s+1),  f"fw_{inp}_s_{s+1}", s+1, s+1)
+                    # if s+1 == split_num:
+                    #     temp_stage_next = CustomStage(pipe.get_stage_module(s+1),  f"fw_{inp}_op_{s+1}", s+1, s+1)
+
                     exec_pipe.add_node(temp_stage)
                     exec_pipe.add_node(temp_stage_next)
                     exec_pipe.add_edge(temp_stage, temp_stage_next)
@@ -231,11 +258,17 @@ class GenModel:
                     unit_map[s]=s
                     unit_map[s+1]=s+1
                     if s == rank:
+                        # print(rank, [n for n in exec_pipe.successors(temp_stage)])
+                        # exit()
                         stage_pipe.add_node(temp_stage)
                         stage_list.append(temp_stage)
                         for n in exec_pipe.successors(temp_stage):
+                            # if n == temp_stage:
+                            #     continue
                             stage_pipe.add_edge(temp_stage, n)
                         for p in exec_pipe.predecessors(temp_stage):
+                            # if p == temp_stage:
+                            #     continue
                             stage_pipe.add_edge(p, temp_stage)
                 
                 #add the last stage
@@ -244,13 +277,16 @@ class GenModel:
                     stage_pipe.add_node(temp_stage)
                     stage_list.append(temp_stage)
                     for n in exec_pipe.successors(temp_stage):
+                        # if n == temp_stage:
+                        #         continue
                         stage_pipe.add_edge(temp_stage, n)
                     for p in exec_pipe.predecessors(temp_stage):
+                        # if p == temp_stage:
+                        #         continue
                         stage_pipe.add_edge(p, temp_stage)
 
-
-
-        custom_pipe = CustomPipeline(exec_dag=stage_pipe, stage_list=stage_list, unit_map=unit_map)
+        custom_pipe = CustomPipeline(exec_dag=stage_pipe, stage_list=stage_list, unit_map=unit_map, 
+        inp_shape = stage_shapes[rank][0], inp_dtype=stage_shapes[rank][1], device=self.device)
         self.exec_pipe = custom_pipe
             
         self.model = pipe.get_stage_module(rank)
@@ -273,267 +309,11 @@ class GenModel:
     def save_model(self):
         pass
 
-@dataclass
-class CustomStage:
-    op: nn.Module
-    stage_id: str
-    rank: int
-    arrival_time: float
-
-    def __hash__(self):
-        return hash(self.stage_id)
-    def __eq__(self, other):
-        return self.stage_id == other.stage_id
-    def __repr__(self):
-        return self.stage_id
-
-@dataclass
-class CustomP2POp:
-    op: dist.P2POp #tells source, dest, vector etc, initially placeholder so some info is repeated
-    src: int
-    dst: int
-    blocking: bool #if communication needs force wait
-    local: bool #if communication can happen via ipc
-
-@dataclass 
-class CustomP2PCommunication:
-    #fwd means communication going from s -> s/s+1 only
-    #no scenario for broadcast here so we just don't add it
-    fwd_send_ops: Dict[str, List[CustomP2POp]] = field(default_factory=dict)
-    fwd_recv_ops: Dict[str, List[CustomP2POp]] = field(default_factory=dict)
-    #bwd can be both SGD p2p and ZOO broadcast
-    #bwd just means communication going from higher rank to lower rank 
-    #doesn't mean s+1 -> s but any si -> sj where i >= j
-    bwd_send_ops: Dict[str, List[CustomP2POp]] = field(default_factory=dict)
-    bwd_recv_ops: Dict[str, List[CustomP2POp]] = field(default_factory=dict)
-    # stage_to_rank: Dict[str, int] = field(default_factory=dict)
-    rank: int=-1
-    #str key -> "stage_timeunit/batchunit"
-    #legal stage communications -> s->s/s+1 for fwd, si -> sj where i >=j 
-    #rank -> let's us optimize comms a little bit (see TODO below) 
-    
-    #TODO small optimization possible during send/recv
-    #if p2pop and ranks of tasks the same (i.e same stage) 
-    #can transfer as ipc rather than over the network
-
-    def punch_out_comms(self, dag: nx.DiGraph, stage_list: List[CustomStage], unit_map: Any):
-        #comms just needs the stage node and (and full dag inherently)
-        #get successors -> map to sends -> never blocking
-        #get predeccessors -> map to recv, recv almost always blocking -> depends on unit_map
-        #e.g
-        # StageA: f1, f2, f3, f1+, , f2+, , f3+ -> one iteration w/ microbatch for zoo -> either force f1+ as occuring in unit 4
-        # or
-        # StageA: f1, , , f1+ -> one iteration w/o microbatch for zoo -> still force f1+ as occuring in unit 4
-        #unit is technically time but using it as a proxy of order of events than anything
-        #stage_list: {nx.Nodes......}} nx.Nodes contain stage info(name, duration, arrival_time), successors, predecessors,
-        #arrival_time used as proxy to calculate "unit" -> unit here is index of arrival time in unit_list
-        #successors of node defined fwd send list events -> all sends non-blocking -> batched with blocking recvs
-        #predecessors of node defined fwd recv list events -> all recvs usually blocking -> if an event forced to run at some unit recv has to be blocking 
-        #for f1+ events -> bwd list filled (w/ same reasoning as above)
-        for src in stage_list:
-            # print(src)
-            if "fw" in src.stage_id:
-                raw_fwd_events_list = dag.successors(src)
-                for raw_fwd_event in raw_fwd_events_list:
-                    #placeholder for dist.p2pop for now
-                    src_rank = src.rank #self.stage_to_rank[src.stage_id] 
-                    src_unit = unit_map[src.arrival_time]
-                    dst = raw_fwd_event.rank #self.stage_to_rank[raw_fwd_event.stage_id]
-                    fwd_event = CustomP2POp(None, src_rank, dst, False, (src_rank==dst))
-                    if f"{src}_{src_unit}" not in self.fwd_send_ops:
-                        self.fwd_send_ops[f"{src}_{src_unit}"] = []
-                    self.fwd_send_ops[f"{src}_{src_unit}"].append(fwd_event)
-                
-                raw_fwd_events_list = dag.predecessors(src)
-                for raw_fwd_event in raw_fwd_events_list:
-                    #placeholder for dist.p2pop for now
-                    src_rank = src.rank #self.stage_to_rank[src.stage_id] 
-                    src_unit = unit_map[src.arrival_time]
-                    dst = raw_fwd_event.rank #self.stage_to_rank[raw_fwd_event.stage_id]
-                    fwd_event = CustomP2POp(None, src_rank, dst, False, (src_rank==dst))
-                    if f"{src}_{src_unit}" not in self.fwd_recv_ops:
-                        self.fwd_recv_ops[f"{src}_{src_unit}"] = []
-                    self.fwd_recv_ops[f"{src}_{src_unit}"].append(fwd_event)
-
-                
-            else:
-                raw_bwd_events_list = dag.successors(src)
-                for raw_bwd_event in raw_bwd_events_list:
-                    #placeholder for dist.p2pop for now
-                    src_rank = src.rank #self.stage_to_rank[src.stage_id] 
-                    src_unit = unit_map[src.arrival_time]
-                    dst = raw_bwd_event.rank #self.stage_to_rank[raw_bwd_event.stage_id]
-                    bwd_event = CustomP2POp(None, src_rank, dst, False, (src_rank==dst))
-                    if f"{src}_{src_unit}" not in self.bwd_send_ops:
-                        self.bwd_send_ops[f"{src}_{src_unit}"] = []
-                    self.bwd_send_ops[f"{src}_{src_unit}"].append(bwd_event)
-                raw_bwd_events_list = dag.predecessors(src)
-                for raw_bwd_event in raw_bwd_events_list:
-                    #placeholder for dist.p2pop for now
-                    src_rank = src.rank#self.stage_to_rank[src.stage_id] 
-                    src_unit = unit_map[src.arrival_time]
-                    dst = raw_bwd_event.rank #self.stage_to_rank[raw_bwd_event.stage_id]
-                    bwd_event = CustomP2POp(None, src_rank, dst, False, (src_rank==dst))
-                    if f"{src}_{src_unit}" not in self.bwd_recv_ops:
-                        self.bwd_recv_ops[f"{src}_{src_unit}"] = []
-                    self.bwd_recv_ops[f"{src}_{src_unit}"].append(bwd_event)
-
-    def simulate_exec(self, fname:str = "sim_exec.csv", additional_inputs:int = 0):
-        #write into csv 
-        #headers are the units 
-        #additional units just means how many times to punch out the pattern
-        if self.rank == 0:
-            f=open(fname, "w")
-            #write the ops per "unit"
-            sorted_fwd_sends = sorted(list(self.fwd_send_ops.keys()))
-            sorted_bwd_recvs = sorted(list(self.bwd_recv_ops.keys()))
-            set_units = set(sorted_fwd_sends + sorted_bwd_recvs)
-
-            total_units = sorted([i for i in set_units])
-            f_str = ""
-            # num = int(unit.split("_")[-1])
-            # unit_commas = ' '.join([',']*num)
-            # f_str = f"{unit_commas}"
-            prev_num = 0
-            for unit in total_units:
-                num = int(unit.split("_")[-1]) + int(unit.split("_")[1]) - prev_num
-                unit_commas = ''.join([',']*num)
-                if unit in sorted_fwd_sends:
-                    unit_tasks  = "_".join([str(i.src) for i in self.fwd_send_ops[unit]])
-                    unit_comms = "_".join([str(i.dst) for i in self.fwd_send_ops[unit]])
-                    f_str += f"get input+run({unit_tasks})+batch_send_fwd({unit_comms})"
-                if unit in sorted_bwd_recvs:
-                    unit_tasks  = "_".join([str(i.src) for i in self.bwd_recv_ops[unit]])
-                    unit_comms = "_".join([str(i.dst) for i in self.bwd_recv_ops[unit]])
-                    f_str += f"{unit_commas}batch_bwd_recv_block({unit_comms})+run({unit_tasks})"
-                prev_num=num
-                f_str+="," #only for rank=0
-            f.write(f"{f_str}\n")
-            f.close()
-
-                
-        else:
-            f=open(fname)
-            while len(f.readlines())!=self.rank:
-                time.sleep(5)
-                f=open(fname)
-
-            f=open(fname, "a+")
-            
-            #write the ops per "unit"
-            sorted_fwd_recvs = sorted(list(self.fwd_recv_ops.keys()))
-            sorted_fwd_sends = sorted(list(self.fwd_send_ops.keys()))
-            sorted_bwd_recvs = sorted(list(self.bwd_recv_ops.keys()))
-            sorted_bwd_sends = sorted(list(self.bwd_send_ops.keys()))
-            total_units = sorted_bwd_recvs + sorted_bwd_sends + sorted_fwd_recvs + sorted_fwd_sends
-            total_units = sorted([i for i in set(total_units)])
-            print(total_units)
-            f_str = ""
-            # num = int(unit.split("_")[-1])
-            # unit_commas = ' '.join([',']*num)
-            # f_str = f"{unit_commas}"
-            prev_num = 0
-            for unit in total_units:
-                num = int(unit.split("_")[-1]) + int(unit.split("_")[1])
-                unit_commas = ' '.join([',']*(num-prev_num))
-                print(self.rank, num, prev_num)
-                if unit in sorted_fwd_recvs:
-                    unit_tasks = "_".join([str(i.src) for i in self.fwd_recv_ops[unit]])
-                    unit_comms = "_".join([str(i.dst) for i in self.fwd_recv_ops[unit]])
-                    f_str += f"{unit_commas}batch_fwd_recv_block({unit_comms})+run({unit_tasks})"
-                if unit in sorted_fwd_sends:
-                    unit_tasks = "_".join([str(i.src) for i in self.fwd_send_ops[unit]])
-                    unit_comms = "_".join([str(i.dst) for i in self.fwd_send_ops[unit]])
-                    f_str += f"+batch_send({unit_comms})"
-                if unit in sorted_bwd_recvs:
-                    unit_tasks = "_".join([str(i.src) for i in self.bwd_recv_ops[unit]])
-                    unit_comms = "_".join([str(i.dst) for i in self.bwd_recv_ops[unit]])
-                    f_str += f"batch_bwd_recv_block({unit_comms})+run({unit_tasks})"
-                if unit in sorted_bwd_sends:
-                    unit_tasks = "_".join([str(i.src) for i in self.bwd_send_ops[unit]])
-                    unit_comms = "_".join([str(i.dst) for i in self.bwd_send_ops[unit]])
-                    f_str += f"+batch_send_bwd({unit_comms})"
-                prev_num=num
-                # f_str+=","    
-            f.write(f"{f_str}\n")
-            f.close()
-
-            # if len(sorted_bwd_recvs)>0:
-            #     f=open(fname, "r") #read first
-            #     lines = f.readlines()
-            #     f_str=''
-            #     line_to_edit = lines[self.rank]
-            #     for unit in sorted_fwd_sends:
-            #         unit_commas = ' '.join([',']*unit)
-            #         unit_tasks = "_".join([str(i.src) for i in sorted_fwd_sends[unit]])
-            #         unit_comms = "_".join([str(i.dst) for i in sorted_fwd_sends[unit]])
-            #         f_str = f"{unit_commas}batch_recv_block({unit_comms})+run({unit_tasks})"
-            #         line_to_edit+=f_str
-            #     lines[self.rank] = line_to_edit
-            #     f = open(fname, "w") #overwrite with corrected info
-            #     f.writelines(lines)
-            #     f.close()
-
-            
-
-
-
-@dataclass
-class CustomPipeline:
-    exec_dag: nx.DiGraph
-    stage_list: List[Any]
-    unit_map: Any
-
-    def exec_line(self):
-        pass
-    #needs to do three things 
-    #first: set up comms and waits  (p2pop or rpc call) -> p2pop lower level, easier to manipulate
-    #second: represent input as micro-batches if required 
-    #third: take in stage, rank and world size, schedule stage based on this
-
-
-    # dag: Any = None 
-    # #networkx dag graph here, dag contains specific node object 
-    # #containing stage information which is 
-    # #akin to rank here, mb_id and action type
-    # metrics: Any = None
-    # rank: Any = None
-    # math_start_map = field(default_factory=dict)
-    # math_duration_map = field(default_factory=dict)
-
-    # def add_hooks(self):
-    #     def pre_hook(module, input):
-    #         self.math_start = time.perf_counter_ns()
-        
-    #     def post_hook(module, input, output):
-    #         self.math_duration = (time.perf_counter_ns() - self.math_start) / 1e6
-
-    #     self.stage.submod.register_forward_pre_hook(pre_hook)
-    #     self.stage.submod.register_forward_hook(post_hook)
-    
-    # def _get_schedule(self):
-    #     #so for a particular rank in the stage,
-    #     #define the pipeline/tasks/action it needs to run 
-    #     #actions are "forward" and "backward"
-    #     #but we only care about "forward" for inference for now
-         
-    #     actions = []
-    #     global_order = list(nx.topological_sort(self.dag))
-    #     for node_data in global_order:            
-    #         if node_data.rank == self.rank:
-    #             actions.append(Action(
-    #                 mb_id=node_data.mb_id, 
-    #                 step_type=node_data.type
-    #             ))
-                
-    #     return actions
-
-
 
 @dataclass
 class FBModel(GenModel):
 
-    def custom_pipeline_inf(self, world, rank):
+    def custom_pipeline_inf(self, world, rank, inputs=None):
         # we have a stage module from the split operation 
         # now we need to "schedule" this stage
         # each stage only schedules it's tasks from the dag 
@@ -546,9 +326,34 @@ class FBModel(GenModel):
         
         custom_comms.punch_out_comms(self.exec_pipe.exec_dag, self.exec_pipe.stage_list, 
         self.exec_pipe.unit_map)
-        custom_comms.simulate_exec()
+        start = time.perf_counter()
 
-        pass
+        output = self.exec_pipe.exec_line(len(inputs), rank, world, custom_comms, inputs if None not in inputs else None)
+        only_outputs=None
+        if rank==world-1:
+            only_outputs = []
+            #convert output to label
+            # print(len(output), len(output[0]))
+            for ind, t, perf in output:
+                only_outputs.append(t)
+                print(f"For input index {ind} output image is {self.top1_label(self.data_labels, t)}, time_taken {(perf-start):.4f} s ")
+        #inputs includes microbatches
+        #TODO this will move to CustomPipeline but for trail and error try here first
+        # if inputs==None:
+        #     #if inputs none, wait for other recvs 
+        #     #start with fwd_recvs, then bwd_recvs -> but that's when we have bwd -> not now, future TODO
+        #     print(rank)
+
+        #     #batch and wait for recvs and send sends
+        #     for recv in custom_comms.fwd_recv_ops:
+        #         temp_tensor = torch.rand()
+        #         p2pop_fwd_recv = dist.P2POp(dist.irecv()) 
+        #         print(custom_comms.fwd_recv_ops[recv])
+
+        # custom_comms.simulate_exec()
+        
+
+        return only_outputs
 
 
 

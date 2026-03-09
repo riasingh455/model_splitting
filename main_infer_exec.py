@@ -31,9 +31,9 @@ if __name__ == "__main__":
     pipeline_library.set_core_behavior(args.cores)
     weights = ResNet18_Weights.DEFAULT
     pretrained_model = resnet18(weights=weights).eval()
-    pipe_mod = pipeline_library.FBModel(pretrained_model, device)
     pre_proc = weights.transforms()
     data_labels = weights.meta['categories'] #subject to change depending on fine-tuning and training
+    pipe_mod = pipeline_library.FBModel(pretrained_model, device, data_labels)
     #early gc potential
     weights=None
     pretrained_model=None 
@@ -41,20 +41,25 @@ if __name__ == "__main__":
     rank = dist.get_rank()
     world = dist.get_world_size()
     example_input = torch.randn(1, 3, 224, 224)
-    pipe_mod.split(example_input, rank, world, input_count=3)
-    print(pipe_mod.exec_pipe)
+    # print(f"world{world}")
+    pipe_mod.split(example_input, rank, world, input_count=2)
+    # print(pipe_mod.exec_pipe)
     # pipe_mod.split(rank, world)
     # exit()
     x0=None
+    x1=None
     l = 1 if len(args.images)==0 else len(args.images)
     for _ in range(l):
         if rank==0:
-            x0 = pipe_mod.load_image_tensor(args.image, pre_proc) 
+            x0 = pipe_mod.load_image_tensor("./bear.jpeg", pre_proc) 
+            x1 = pipe_mod.load_image_tensor("./penguin.jpeg", pre_proc) 
         # output = pipe_mod.pipeline_inference(world, rank, args.warmup, args.iters, x0)
-        output = pipe_mod.custom_pipeline_inf(world, rank)
-        if output!=None:
-            res = pipe_mod.top1_label(data_labels, output)
-            print(res)
+        # print(x0.shape)
+        outputs = pipe_mod.custom_pipeline_inf(world, rank, [x0, x1])
+        if outputs!=None:
+            for output in outputs:
+                res = pipe_mod.top1_label(data_labels, output)
+                print(res)
     dist.destroy_process_group()
     
 
