@@ -212,7 +212,7 @@ class GenModel:
         #used to find input and output shapes
         #run on one machine
         stage_shapes = {}
-        output = torch.empty(1)
+        output = torch.empty(size=tuple(example_input.shape), dtype=example_input.dtype)
         for s in range(split_num):
             temp = pipe.get_stage_module(s)
             if s not in stage_shapes:
@@ -313,7 +313,7 @@ class GenModel:
 @dataclass
 class FBModel(GenModel):
 
-    def custom_pipeline_inf(self, world, rank, inputs=None):
+    def custom_pipeline_inf(self, world, rank, inputs=None, count_flop:bool = False):
         # we have a stage module from the split operation 
         # now we need to "schedule" this stage
         # each stage only schedules it's tasks from the dag 
@@ -323,20 +323,41 @@ class FBModel(GenModel):
 
         # custom_stage = CustomStage(self.model, rank, rank)
         custom_comms = CustomP2PCommunication(rank=rank)
+        if count_flop:
+            flop_counter = FlopCounterMode(display=False, depth=None)
+            with flop_counter:
+                x=torch.randn(size=self.exec_pipe.inp_shape, 
+                          dtype=self.exec_pipe.inp_dtype, device=self.device)
+                
+                self.model.forward(x)
+                self.total_flops =  flop_counter.get_total_flops()
         
         custom_comms.punch_out_comms(self.exec_pipe.exec_dag, self.exec_pipe.stage_list, 
         self.exec_pipe.unit_map)
+
+        dist.barrier()
+        #sync procs to get timing right
         start = time.perf_counter()
 
         output = self.exec_pipe.exec_line(len(inputs), rank, world, custom_comms, inputs if None not in inputs else None)
-        only_outputs=None
-        if rank==world-1:
-            only_outputs = []
+        end = time.perf_counter()
+        #only_outputs=None
+        only_times=[end-start]
+        only_network=[]
+        #if rank==world-1:
+        only_outputs = []
+            #only_times = []
             #convert output to label
             # print(len(output), len(output[0]))
-            for ind, t, perf in output:
+            #temp_times=[]
+            #TODO make perf network times only
+        for ind, t, perf in output:
+            if rank==world-1:
                 only_outputs.append(t)
-                print(f"For input index {ind} output image is {self.top1_label(self.data_labels, t)}, time_taken {(perf-start):.4f} s ")
+            only_network.append(perf)
+            #temp_times.append(perf-start)
+            #print(f"For input index {ind} output image is {self.top1_label(self.data_labels, t)}")#, time_taken {(perf-start):.4f} s ")
+            #only_times.append(end-start)
         #inputs includes microbatches
         #TODO this will move to CustomPipeline but for trail and error try here first
         # if inputs==None:
@@ -353,7 +374,7 @@ class FBModel(GenModel):
         # custom_comms.simulate_exec()
         
 
-        return only_outputs
+        return (only_outputs, only_times, only_network)
 
 
 

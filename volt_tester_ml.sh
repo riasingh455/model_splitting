@@ -21,9 +21,23 @@ echo "startheat ${k}-$(date '+TIME:%H:%M:%S.%3N')" >> ${log_path}/speed_chronos$
 echo "-${k}- number of processes running"
 #for (( j=1; j<=$k; j++ )); do
      #run buniel on cores
-torchrun --nnodes $world_size --nproc-per-node 1 --node-rank $rank --master-addr $master --master-port 8123 ${script_path}/main_infer_exec.py --warmup 3 --cores $cores  >> ${log_path}/speed_chronos$t.log  &
+#torchrun --nnodes $world_size --nproc-per-node 1 --node-rank $rank --master-addr $master --master-port 8123 ${script_path}/main_infer_exec.py --warmup 3 --cores $cores  >> ${log_path}/speed_chronos$t.log  &
+#repeat images 30 times
+img1="/home/pi/model_splitting/bear.jpeg"
+img2="/home/pi/model_splitting/penguin.jpeg"
+final_str=""
+for (( i = 0; i < $inp_len; i++ ))
+do
+	final_str+="${img1} ${img2} "
+done
 
-pids+=($!)
+j=0
+#for (( j = 0; j < $copy; j++ ))
+#do
+	torchrun --nnodes $world_size --nproc-per-node 1 --node-rank $rank --master-addr $master --master-port $(( 8123+$j )) ${script_path}/main_infer_exec.py --warmup 0 --iters 1 --cores $cores --images $final_str >> ${log_path}/speed_chronos$t.log  &
+  pids+=($!)
+#done
+
       # echo "${i} ${j} loop"
   #done
 wait "${pids[@]}"
