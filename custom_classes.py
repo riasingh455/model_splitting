@@ -385,12 +385,14 @@ class CustomPipeline:
             
         
         #left over sends fired off
+        net_start = time.perf_counter()
         if len(batched_sends)>0:
             works = dist.batch_isend_irecv(batched_sends)
             # print(f"leftovers for rank {rank}")
             for w in works:
                 w.wait()
-
+        net_end = time.perf_counter()
+        output_labels_and_times.append([exepected_inp_count, [], net_end-net_start])
         return output_labels_and_times
 
 

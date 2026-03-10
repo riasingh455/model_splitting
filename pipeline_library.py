@@ -303,8 +303,12 @@ class GenModel:
     def top1_label(self, categories:Any, logits: torch.Tensor) -> str:
         #weights = ResNet18_Weights.DEFAULT
         #categories = weights.meta["categories"]
-        idx = int(logits.argmax(dim=1).item())
-        return f"{idx}: {categories[idx]}"
+        idx=0
+        try:
+            idx = int(logits.argmax(dim=1).item())
+        except Exception as e:
+            idx = logits.argmax(dim=1).tolist()
+        return f"{idx}: {categories[idx]}" if type(idx)!=list else ", ".join([str(categories[i]) for i in idx])
 
     def save_model(self):
         pass

@@ -1,4 +1,5 @@
 import tyro
+from PIL import Image
 from dataclasses import dataclass
 import pipeline_library 
 import torch
@@ -14,6 +15,13 @@ class Args:
     # stages: int
     # assigned_rank:int
     # local_procs: int
+    rank: int = 0
+    world: int = 1
+    ip: str = "127.0.0.1"
+    port: int = 8123
+    batch_size: int = 5
+    batch_num: int = 1
+    copy: int = 1
     cores:int = 1
     device: str = "cpu"
     image: str = "./bear.jpeg"
@@ -26,43 +34,56 @@ class Args:
     def backend(self):
         return "gloo" if self.device=="cpu" else "nccl"
 
-if __name__ == "__main__":
-    mp.set_start_method('spawn')
-    args = tyro.cli(Args)
-    device = torch.device(args.device)
-    #import model and do splits before hand
-    pipeline_library.set_core_behavior(args.cores)
+
+def worker(world, rank, batch_size, num_batches, backend, ip, port, full_iter, inps, device):
+    init_method = f"tcp://{ip}:{port}"
+    dist.init_process_group(backend=backend, init_method=init_method, world_size=world, rank=rank)
+    
     weights = ResNet18_Weights.DEFAULT
     pretrained_model = resnet18(weights=weights).eval()
     pretrained_model.share_memory()
     pre_proc = weights.transforms()
     data_labels = weights.meta['categories'] #subject to change depending on fine-tuning and training
     pipe_mod = pipeline_library.FBModel(pretrained_model, device, data_labels)
-    #early gc potential
-    weights=None
-    pretrained_model=None 
-    dist.init_process_group(backend=args.backend)
-    rank = dist.get_rank()
-    world = dist.get_world_size()
-    example_input = torch.randn(1, 3, 224, 224)
+    #example_input = torch.randn(1, 3, 224, 224)
+    #batch size has to be multiple of inps
+    old_b = batch_size
+    if batch_size%len(inps)!=0:
+        batch_size= (batch_size//len(inps))*len(inps)
+    if batch_size < len(inps):
+        batch_size = len(inps)
+    if batch_size!=old_b:
+        print(f"Correcting batch size from {old_b} to {batch_size}")
+
+    example_input = torch.randn(1*batch_size, 3, 224, 224)
+
+    pipe_mod.split(example_input, rank, world, input_count=num_batches)
+    print("Split done -> model run start")
+    #rank = dist.get_rank()
+    #world = dist.get_world_size()
     # print(f"world{world}")
-    pipe_mod.split(example_input, rank, world, input_count=len(args.images))
+    #pipe_mod.split(example_input, rank, world, input_count=len(args.images))
     # print(pipe_mod.exec_pipe)
     # pipe_mod.split(rank, world)
     # exit()
-    x0=None
-    x1=None
-    l = 1 if len(args.images)==0 else len(args.images)
-    proc_images = [None]*len(args.images)
+    #x0=None
+    #x1=None
+    l = 1 if len(inps)==0 else len(inps)
+    proc_images = [None]*len(inps)
     if rank==0:
-        for ind, i in enumerate(args.images):
-            proc_images[ind] = pipe_mod.load_image_tensor(i, pre_proc)
+        for ind, i in enumerate(inps):
+            proc_images[ind] = pre_proc(Image.open(i).convert("RGB"))
+ # pipe_mod.load_image_tensor(i, pre_proc)
+        
+        temp_images = proc_images*(batch_size//len(inps))#14 images total 
+        proc_images = [torch.stack(temp_images) for i in range(num_batches)]
+
 
     #for _ in range(l):
     time_sets = []
     net_sets = []
     count_flop=True
-    for it in range(args.warmup + args.iters):
+    for it in range(full_iter): #full_iter = warmup+iters
                 #x0 = pipe_mod.load_image_tensor(args.images[0], pre_proc) 
         #x1 = pipe_mod.load_image_tensor(args.images[1], pre_proc) 
     # output = pipe_mod.pipeline_inference(world, rank, args.warmup, args.iters, x0)
@@ -74,26 +95,68 @@ if __name__ == "__main__":
             time_sets.extend(times)
         if len(nets)>0:
             net_sets.extend(nets)
-        if len(outputs)>0:
-            for output in outputs:
-                res = pipe_mod.top1_label(data_labels, output)
+        #if len(outputs)>0:
+            #for output in outputs:
+                #res = pipe_mod.top1_label(data_labels, output)
                 #print(res)
+    num_imgs = num_batches*batch_size
     if len(time_sets)>0:
         print(f"rank {rank} FLOP count: {pipe_mod.total_flops} and "+
-              f"full time*10**9 s/op: {( (10**9)*(np.mean(time_sets)/len(args.images))/pipe_mod.total_flops ):.4f}")
+              f"full time*10**9 s/op: {( (10**9)*(np.mean(time_sets)/num_imgs)/pipe_mod.total_flops ):.4f}")
 
         print(f"Time taken by rank:{rank} in total(avg): {np.mean(time_sets):.4f}s "+
-              f"on avg per image: {(np.mean(time_sets)/len(args.images)):.4f}s "+ 
-              f"with std: {(np.std(time_sets)/len(args.images)):.4f}s "+
+              f"on avg per image: {(np.mean(time_sets)/num_imgs):.4f}s "+ 
+              f"with std: {(np.std(time_sets)/num_imgs):.4f}s "+
               f"network time: {np.mean(net_sets):.4f}s and network std: {np.std(net_sets):.4f}s "+
-              f"compute time: { ((np.mean(time_sets)/len(args.images)) - np.mean(net_sets)):.4f}s "+
+              f"network time per img: {(np.mean(net_sets)/num_imgs):.4f} "+
+              f"compute time: { ((np.mean(time_sets)/num_imgs) - np.mean(net_sets)/num_imgs):.4f}s "+
               f"compute/network ratio: "+
-              f"{( ((np.mean(time_sets)/len(args.images)) - np.mean(net_sets))/np.mean(net_sets) ):.4f} "
-              f"and throughput {(len(args.images)/np.mean(time_sets)):.4f} img/s")
+              f"{( ((np.mean(time_sets)/num_imgs) - (np.mean(net_sets)/num_imgs))/np.mean(net_sets) ):.4f} "
+              f"and throughput {(num_imgs/np.mean(time_sets)):.4f} img/s")
 
 
     dist.destroy_process_group()
+
+
+
+
+if __name__ == "__main__":
+    #mp.set_start_method('spawn') 
+    #mp.set_start_method("spawn", force=True)
+    args = tyro.cli(Args)
+    device = torch.device(args.device)
+    #import model and do splits before hand
+    pipeline_library.set_core_behavior(args.cores)
     
+    #weights = ResNet18_Weights.DEFAULT
+    #pretrained_model = resnet18(weights=weights).eval()
+    #pretrained_model.share_memory()
+    #pre_proc = weights.transforms()
+    #data_labels = weights.meta['categories'] #subject to change depending on fine-tuning and training
+    #pipe_mod = pipeline_library.FBModel(pretrained_model, device, data_labels)
+    
+    #early gc potential
+    
+    #weights=None
+    #pretrained_model=None
+
+    #example_input = torch.randn(1, 3, 224, 224)
+    #pipe_mod.split(example_input, args.rank, args.world, input_count=len(args.images))
+    print("Code start -> moving to subprocess") 
+    worker(args.world, args.rank, args.batch_size, args.batch_num, args.backend, args.ip, 
+           args.port, args.warmup+args.iters, args.images, device)
+
+  #contexts = []
+    #for off in range(args.copy):
+    #    ctx = mp.spawn(worker, 
+    #             args=(args.world, args.rank, args.backend, args.ip, 
+    #                   args.port+off, args.warmup+args.iters, args.images, device), 
+    #             nprocs=1, join=False) 
+    #    contexts.append(ctx)
+#
+ #   for ctx in contexts:
+ #       ctx.join()
+
 
 
 
