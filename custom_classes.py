@@ -7,6 +7,7 @@ import time
 import torch
 import torch.nn as nn
 import torch.distributed as dist
+import torch.multiprocessing as mp
 
 @dataclass
 class CustomStage:
@@ -248,6 +249,22 @@ class CustomPipeline:
     inp_dtype: Any
     device: Any
 
+    def __repr__(self):
+        return "_".join([str(i) for i in self.stage_list])
+    def __hash__(self):
+        return hash("_".join([str(i) for i in self.stage_list]))
+    def __eq__(self, other):
+        #return 
+        return "_".join([str(i) for i in self.stage_list]) == "_".join([str(i) for i in other.stage_list])
+
+    def stager(self, stage_ind, t, q):
+        #q.put(4*4)
+        print("CHECKING INSIDE")
+        #q.put(stage_ind.forward(t))
+        q.put(self.stage_list[stage_ind].op.forward(t))
+        print("CHECKING INSIDE AFTER")
+        #q.put(self.stage_list[stage_ind].op.forward(t))
+
     def exec_line(self, exepected_inp_count:int, rank:int , world:int, comms: CustomP2PCommunication, inputs = None):
         #first check if any fwd recvs
         # dist.batch_isend_irecv()
@@ -259,6 +276,8 @@ class CustomPipeline:
         sorted_bwd_recvs = sorted(list(comms.bwd_recv_ops.keys()))
         sorted_bwd_sends = sorted(list(comms.bwd_send_ops.keys()))
         output_labels_and_times = []
+        copy_stage_list = [i for i in range(len(self.stage_list))]
+
         for ind in range(exepected_inp_count):
             #wait for fwd first
             # blocking = False
@@ -267,7 +286,7 @@ class CustomPipeline:
                 for recv in comms.fwd_recv_ops[recv_op]:
                     # print(comms.fwd_recv_ops[recv_op])
                     src = recv.dst
-                    batched_recv_tensors.append(torch.empty(self.inp_shape, dtype=self.inp_dtype, device=self.device))
+                    batched_recv_tensors.append(torch.empty(self.inp_shape, dtype=self.inp_dtype))
                     # blocking = recv.blocking
                     recv_p2p = dist.P2POp(dist.irecv, 
                     batched_recv_tensors[-1], src)
@@ -275,20 +294,24 @@ class CustomPipeline:
                     # print(recv_p2p)
 
                     # dist.recv(batched_recv_tensors[-1], src)
-
+            net_start,net_end=0,0
             if len(batched_recvs) > 0 or len(batched_sends)>0:
                 # print(f"Trying recv for {rank} with {ind}")
-                # print(rank , batched_sends)
-                # print(rank , batched_recvs)
+                #print(rank, ind , batched_sends)
+                #print(rank, ind , batched_recvs)
                 works = dist.batch_isend_irecv(batched_sends+batched_recvs)
                 # print(f"rank {rank} and {len(works)} with {ind}")
+                net_start = time.perf_counter()
                 for w in works:
                     # print(f"{rank} {ind} {w}")
                     w.wait()
                     # print(batched_recv_tensors)
-                # print(f"Successful recv for {rank}")
+                net_end = time.perf_counter()
+                #print(f"rank:{rank} ind:{ind} network time:{(net_end-net_start)}s")
+                #print(f"Successful recv for {rank}")
             batched_sends = []            
-            
+
+            output_labels_and_times.append([ind, [], net_end-net_start ])
             #because we are grouping recv and send, sends are automatically async lmao 
             #so blocking as a term is pointless : / -> remove from class
             if rank==0 and inputs!=None:
@@ -297,13 +320,39 @@ class CustomPipeline:
                 batched_recv_tensors.append(inputs[ind])
             #use recv tensors
             batched_send_tensors = []
+            #print("CHECKING BEFORE")
             for t in batched_recv_tensors:
-                stage = self.stage_list.pop(0)
+                stage_ind = copy_stage_list.pop(0)
+                stage = self.stage_list[stage_ind]
+
+                #stage.op.share_memory()
                 #list if broadcasted/recomposed?
                 # for s in stages:
+                #output=[]
+                #procs = []
+                #q=mp.Queue()
+                #for k in range(1):
+                #    p = mp.Process(target=self.stager, args=(stage_ind, t, q, ))
+                #    p.start()
+                #    procs.append(p)
+                #for p in procs:
+                #    p.join()
+                #output = q.get()
+                #print("BIG LETTERS HERE")
+                #exit()
+                #print("Outpout", output)
+
+                #with Pool(processes=4) as pool:
+                #    res = list(pool.imap_unordered(self.stager, [(stage, [0])]*4))
+                #    output = res[0]
+                    #for i in res:
+                    #    output = i #change to stack later
+
+
+
                 output = stage.op.forward(t)
                 batched_send_tensors.append(output)
-                print(f"Successful recv and forward for {rank} with {output.shape}")
+                #print(f"Successful recv and forward for {rank} with {output.shape}")
             batched_recvs = []
             batched_recv_tensors= []
 
@@ -324,12 +373,13 @@ class CustomPipeline:
                         # dist.send(to_send, dst)
                         # print(f"Sent! w/ rank {rank} and ind {ind}")
             
-            else:
+            elif len(batched_send_tensors)>0:
                 #this means it's final layer
                 #return output label tensors
                 #TODO for training there might be left-over tasks make sure to add them here too if required
-                output_labels_and_times.append([ind, batched_send_tensors[0], time.perf_counter()])
-            
+                output_labels_and_times[-1]=[ind, batched_send_tensors[0], net_end-net_start ]
+                
+            #else:
             #TODO check bwds and repeat above processes
             #TODO be careful of leftover tasks if any
             

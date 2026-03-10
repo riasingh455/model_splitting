@@ -10,7 +10,7 @@ sinfo -N | grep "${subcluster}" | grep "idle" | grep -v "idle\*" | awk '{print $
 
 a=$(cat ${log_path}/machine_samples)
 good_ones=($a)
-world=4
+world=2
 master=${good_ones[0]}
 #pick master from choice maybe?
 #currently just first in line
@@ -18,7 +18,7 @@ master=${good_ones[0]}
 for (( i = 0 ; i < ${#good_ones[@]}; i++ ))
 do
         val=${good_ones[$i]}
-        log_path="${log_path}/trial/" world_size=$world rank=$i master=$master cores=4 srun -N 1 --nodelist=$val ${script_path}/volt_tester_ml.sh 4 0  > /dev/null&
+        copy=1 inp_len=1 log_path="${log_path}/trial/" world_size=$world rank=$i master=$master cores=1 srun -N 1 --nodelist=$val ${script_path}/volt_tester_ml.sh 4 0  > /dev/null&
         #wait
         if [ $i -ge $(( $world - 1 )) ]
         then
