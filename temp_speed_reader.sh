@@ -1,5 +1,5 @@
 #!/bin/bash
-temp_log_path="/home/pi/model_splitting/logs"
+temp_log_path="/home/animesh/model_splitting/logs"
 if [ -z $log_path ]
 then
 	log_path=$temp_log_path
