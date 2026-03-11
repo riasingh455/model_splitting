@@ -2,9 +2,12 @@
 flag=0
 script_path="/home/animesh/model_splitting/full_sweep/"
 pids=()
-for i in 1; do#{1..4}; do 
+for i in 1; #{1..4}; do 
+do
+	#echo "i" $i
 	pids=()
-	for j in 2; do#{1..6}; do
+	for j in 2; #{1..6}; do
+	do
 		#./sweeper.sh $i $j &
 		if [ -f ${script_path}/b_${i}_${j}_ml_sweep.sh ]
 		then	
@@ -19,10 +22,10 @@ for i in 1; do#{1..4}; do
     flag=0
     for k in ${pids[@]}; do
       if [ -d /proc/$k ]; then 
-				flag=1
-				break
-	    fi
-	  done
+	flag=1
+	break
+      fi
+    done
     if [ $flag -eq 1 ]; then
       #for c in $(squeue | grep "ReqNodeNotAvail" | awk '{print $9}'); do
       for c in $(squeue | grep "ReqNodeNotAvail" | awk '{print $9}' | awk -F':' '{print $2}' | awk -F')' '{print $1}'); do

@@ -2,7 +2,7 @@
 #middling_devs=(2 4 6 8 10 12 13 16 22 24 27 28 31 32 34 36 38 40)
 middling_devs=(2 4 5 7 13 14 26 27 31 33 38)
 fragile_devs=(1 3 11 12 17 18 19 22 24 28 32 34 35 36 40 41 42)
-log_path="/home/animesh/model_splitting/logs/sweep/b-${1}-${2}/"
+log_path="/home/animesh/model_splitting/logs/sweep/b-1-2/"
 mkdir -p ${log_path}
 
 script_path="/home/animesh/model_splitting/"
@@ -53,18 +53,18 @@ specific_middling_test () {
  val=$5
  iters=$6
  folder_key="run/${i}_${world}_${batch_size}_${batch_num}"
-        if [ $(sinfo -N | grep "${val}-${i}" | grep "idle" | grep -v "idle\*" | wc -l) -eq 0 ]
+        if [ $(sinfo -N | grep -w "${val}-${i}" | grep "idle" | grep -v "idle\*" | wc -l) -eq 0 ]
         then
                 #mkdir -p ${log_path}/${folder_key}_logs
                 #mv ${log_path}/${size}_logs/* ${log_path}/${i}_${size}_${sample}_logs/
 
                 return
         fi
-
+	echo "Node ${val}-${i} Available"
         #randomly sample - sample number of devices
         visited=($i)
         devs=()
-        while [ ${#devs[@]} -lt $sample ] && [ ${#visited[@]} -lt ${#middling_devs[@]} ]
+	while [ ${#devs[@]} -lt $(( $world-1 )) ] && [ ${#visited[@]} -lt ${#middling_devs[@]} ]
         do
                 d=${middling_devs[ $RANDOM % ${#middling_devs[@]} ]}
 
@@ -185,20 +185,21 @@ do
         #each middling device has 30 selections, 10 total model iterations (5 counted for avg)
         #each world size tests different devices every iteration of the 30 we check here
         #extremes check differnt device and pipeline overlaps -> more compute intensive? less compute intensive?
-
+	mkdir -p ${log_path}/run/
         for (( ind=0; ind<${#middling_devs[@]}; ind++ ));
         do
-	        for (( s=0; s<${#world_size}; s++ ));
+	        for (( s=0; s<${#world_sizes}; s++ ));
         	        #for s in 0 1 5 10
 	        do
 	                for (( b=0; b<${#batches}; b++ ));
 	                do
 	                        for (( n=0; n<${#num_batches}; n++ ));
 	                        do
-	                                specific_middling_test ${world_size[$s]} ${batches[$b]} ${num_batches[$n]} $ind $pdu_tag 5  #600 $s ${middling_devs[$ind]} $pdu_tag
+	                                specific_middling_test ${world_sizes[$s]} ${batches[$b]} ${num_batches[$n]} ${middling_devs[$ind]} $pdu_tag 5  #600 $s ${middling_devs[$ind]} $pdu_tag
 	                        done
 	                done
 	        done
+		#break
         done
         
         mkdir -p ${log_path}/${run}_ranking_logs/
