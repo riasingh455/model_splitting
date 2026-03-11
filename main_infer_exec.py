@@ -26,8 +26,8 @@ class Args:
     device: str = "cpu"
     image: str = "./bear.jpeg"
     images: tuple[str,...] = () #if multiple images provided, each image run an iters+warmups number of times 
-    iters:int = 10 #number of times to inference a single image and measures time
-    warmup: int = 0 #number of times to not measure time to warmup the inference
+    iters:int = 5 #number of times to inference a single image and measures time
+    warmup: int = 5 #number of times to not measure time to warmup the inference
     # local_pipeline: bool = False
 
     @property
@@ -35,7 +35,7 @@ class Args:
         return "gloo" if self.device=="cpu" else "nccl"
 
 
-def worker(world, rank, batch_size, num_batches, backend, ip, port, full_iter, inps, device):
+def worker(world, rank, batch_size, num_batches, backend, ip, port, warmup, iters, inps, device):
     init_method = f"tcp://{ip}:{port}"
     dist.init_process_group(backend=backend, init_method=init_method, world_size=world, rank=rank)
     
@@ -83,6 +83,7 @@ def worker(world, rank, batch_size, num_batches, backend, ip, port, full_iter, i
     time_sets = []
     net_sets = []
     count_flop=True
+    full_iter = warmup+iters
     for it in range(full_iter): #full_iter = warmup+iters
                 #x0 = pipe_mod.load_image_tensor(args.images[0], pre_proc) 
         #x1 = pipe_mod.load_image_tensor(args.images[1], pre_proc) 
@@ -91,14 +92,15 @@ def worker(world, rank, batch_size, num_batches, backend, ip, port, full_iter, i
     #for it in range(args.warmup+args.iters):
         outputs, times, nets = pipe_mod.custom_pipeline_inf(world, rank, proc_images, count_flop)
         count_flop=False
-        if len(times)>0:
-            time_sets.extend(times)
-        if len(nets)>0:
-            net_sets.extend(nets)
-        #if len(outputs)>0:
-            #for output in outputs:
-                #res = pipe_mod.top1_label(data_labels, output)
-                #print(res)
+        if it > warmup:
+            if len(times)>0:
+                time_sets.extend(times)
+            if len(nets)>0:
+                net_sets.extend(nets)
+            #if len(outputs)>0:
+                #for output in outputs:
+                    #res = pipe_mod.top1_label(data_labels, output)
+                    #print(res)
     num_imgs = num_batches*batch_size
     if len(time_sets)>0:
         print(f"rank {rank} FLOP count: {pipe_mod.total_flops} and "+
@@ -144,7 +146,7 @@ if __name__ == "__main__":
     #pipe_mod.split(example_input, args.rank, args.world, input_count=len(args.images))
     print("Code start -> moving to subprocess") 
     worker(args.world, args.rank, args.batch_size, args.batch_num, args.backend, args.ip, 
-           args.port, args.warmup+args.iters, args.images, device)
+           args.port, args.warmup,args.iters, args.images, device)
 
   #contexts = []
     #for off in range(args.copy):
