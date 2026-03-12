@@ -177,9 +177,9 @@ pdu_tag="bramble-1-2"
 #for run in {1..30};
 #for run in 1;
 #do
-world_sizes=(1 2 6) #resnet-18 max splits is 8 -> empirically found
-batches=(1 4 10)
-num_batches=(1 10)
+world_sizes=(6 2 1) #resnet-18 max splits is 8 -> empirically found
+batches=(6 4 1)
+num_batches=(10 1)
 for run in 1; #{1..10};
 do 
         #each middling device has 30 selections, 10 total model iterations (5 counted for avg)
@@ -188,14 +188,16 @@ do
 	mkdir -p ${log_path}/run/
         for (( ind=0; ind<${#middling_devs[@]}; ind++ ));
         do
-	        for (( s=0; s<${#world_sizes}; s++ ));
+	        for (( s=0; s<${#world_sizes[@]}; s++ ));
         	        #for s in 0 1 5 10
 	        do
-	                for (( b=0; b<${#batches}; b++ ));
+	                for (( b=0; b<${#batches[@]}; b++ ));
 	                do
-	                        for (( n=0; n<${#num_batches}; n++ ));
+	                        for (( n=0; n<${#num_batches[@]}; n++ ));
 	                        do
-	                                specific_middling_test ${world_sizes[$s]} ${batches[$b]} ${num_batches[$n]} ${middling_devs[$ind]} $pdu_tag 5  #600 $s ${middling_devs[$ind]} $pdu_tag
+	                                echo "STARTED RUN ${world_sizes[$s]} ${batches[$b]} ${num_batches[$n]} ${middling_devs[$ind]}"
+					specific_middling_test ${world_sizes[$s]} ${batches[$b]} ${num_batches[$n]} ${middling_devs[$ind]} $pdu_tag 5  #600 $s ${middling_devs[$ind]} $pdu_tag
+	                                echo "FINISHED RUN ${world_sizes[$s]} ${batches[$b]} ${num_batches[$n]} ${middling_devs[$ind]}"
 	                        done
 	                done
 	        done
