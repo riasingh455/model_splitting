@@ -97,11 +97,11 @@ specific_middling_test () {
         mkdir -p "${log_path}/${folder_key}_logs/"
         iters=$iters log_path="${log_path}/${folder_key}_logs/" batch_num=$batch_num batch_size=$batch_size world_size=$world rank=$rank master="${val}-${i}" cores=1 srun -N 1 --nodelist="${val}-${i}" ${script_path}/volt_tester_ml.sh 4 0  > /dev/null&
         pids=($!)
-        counter=1
+        #counter=1
 	for v in ${devs[@]}
         do
-                rank=$(( $rank + $counter ))
-                counter=$(( $counter + 1 ))
+                rank=$(( $rank + 1 ))
+                #counter=$(( $counter + 1 ))
                 #log_path=$log_path start=4 end=4 size=$1 srun -N 1 --nodelist="${val}-${v}" ${script_path}/volt_tester.sh 4 0  > /dev/null&
                 iters=$iters log_path="${log_path}/${folder_key}_logs/" batch_num=$batch_num batch_size=$batch_size world_size=$world rank=$rank master="${val}-${i}" cores=1 srun -N 1 --nodelist="${val}-${v}" ${script_path}/volt_tester_ml.sh 4 0  > /dev/null&
                 pids+=($!)
