@@ -342,7 +342,7 @@ class FBModel(GenModel):
         dist.barrier()
         time.sleep(30) #to calm the devices down and recover from any previous throttles
         dist.barrier()
-        print(f"{datetime.now()} Sync done -> model run start")
+        print(f"{datetime.now()} Sync done -> model run start", flush=True)
 
         #sync procs to get timing right
         start = time.perf_counter()

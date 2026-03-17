@@ -54,12 +54,12 @@ def worker(world, rank, batch_size, num_batches, backend, ip, port, warmup, iter
     if batch_size < len(inps):
         batch_size = len(inps)
     if batch_size!=old_b:
-        print(f"Correcting batch size from {old_b} to {batch_size}")
+        print(f"Correcting batch size from {old_b} to {batch_size}", flush=True)
 
     example_input = torch.randn(1*batch_size, 3, 224, 224)
 
     pipe_mod.split(example_input, rank, world, input_count=num_batches)
-    print(f"{datetime.now()} Split done -> model sync start")
+    print(f"{datetime.now()} Split done -> model sync start", flush=True)
     #rank = dist.get_rank()
     #world = dist.get_world_size()
     # print(f"world{world}")
@@ -110,7 +110,7 @@ def worker(world, rank, batch_size, num_batches, backend, ip, port, warmup, iter
     num_imgs = num_batches*batch_size
     if len(time_sets)>0:
         print(f"rank {rank} FLOP count: {pipe_mod.total_flops} and "+
-              f"full time*10**9 s/op: {( (10**9)*(np.mean(time_sets)/num_imgs)/pipe_mod.total_flops ):.4f}")
+              f"full time*10**9 s/op: {( (10**9)*(np.mean(time_sets)/num_imgs)/pipe_mod.total_flops ):.4f}", flush=True)
 
         print(f"Time taken by rank:{rank} in total(avg): {np.mean(time_sets):.4f}s "+
             #   f"Time sets raw:{[time_sets[r:r+world] for r in range(0, len(time_sets), world)]} "+
@@ -125,7 +125,7 @@ def worker(world, rank, batch_size, num_batches, backend, ip, port, warmup, iter
               f"compute time: { ((np.mean(time_sets)/num_imgs) - np.mean(net_sets)/num_imgs):.4f}s "+
               f"compute/network ratio: "+
               f"{( ((np.mean(time_sets)/num_imgs) - (np.mean(net_sets)/num_imgs))/np.mean(net_sets) ):.4f} "
-              f"and throughput {(num_imgs/np.mean(time_sets)):.4f} img/s")
+              f"and throughput {(num_imgs/np.mean(time_sets)):.4f} img/s", flush=True)
 
 
     dist.destroy_process_group()
@@ -155,7 +155,7 @@ if __name__ == "__main__":
 
     #example_input = torch.randn(1, 3, 224, 224)
     #pipe_mod.split(example_input, args.rank, args.world, input_count=len(args.images))
-    print("Code start -> moving to subprocess") 
+    print("Code start -> moving to subprocess", flush=True) 
     worker(args.world, args.rank, args.batch_size, args.batch_num, args.backend, args.ip, 
            args.port, args.warmup, args.iters, args.images, device)
 
