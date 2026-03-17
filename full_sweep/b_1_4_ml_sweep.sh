@@ -197,11 +197,11 @@ do
 	                #         for (( n=0; n<${#num_batches[@]}; n++ ));
 	                #         do
 	                                # echo "STARTED RUN ${world_sizes[$s]} ${batches[$b]} ${num_batches[$n]} ${middling_devs[$ind]}"
-	                                echo "STARTED RUN ${world_sizes[$s]} 4 10 ${middling_devs[$ind]}"
-					# specific_middling_test ${world_sizes[$s]} ${batches[$b]} ${num_batches[$n]} ${middling_devs[$ind]} $pdu_tag 5  #600 $s ${middling_devs[$ind]} $pdu_tag
-					specific_middling_test ${world_sizes[$s]} 4 10 ${middling_devs[$ind]} $pdu_tag 5  #600 $s ${middling_devs[$ind]} $pdu_tag
+	                                echo "STARTED RUN ${world_sizes[$s]} 4 6 ${middling_devs[$ind]}"
+					# specific_middling_test ${world_sizes[$s]} ${batches[$b]} ${num_batches[$n]} ${middling_devs[$ind]} $pdu_tag 2  #600 $s ${middling_devs[$ind]} $pdu_tag
+					specific_middling_test ${world_sizes[$s]} 4 6 ${middling_devs[$ind]} $pdu_tag 2  #600 $s ${middling_devs[$ind]} $pdu_tag
 	                                # echo "FINISHED RUN ${world_sizes[$s]} ${batches[$b]} ${num_batches[$n]} ${middling_devs[$ind]}"
-	                                echo "FINISHED RUN ${world_sizes[$s]} 4 10 ${middling_devs[$ind]}"
+	                                echo "FINISHED RUN ${world_sizes[$s]} 4 6 ${middling_devs[$ind]}"
 	                #         done
 	                # done
 	        done

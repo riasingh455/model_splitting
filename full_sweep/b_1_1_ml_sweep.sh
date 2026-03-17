@@ -1,8 +1,8 @@
 #!/bin/bash
 #middling_devs=(2 4 6 8 10 12 13 16 22 24 27 28 31 32 34 36 38 40)
-middling_devs=(2 3 5 10 12 13 14 17 18 21 22 26 30 34 35 38 41 42)
-
-log_path="/home/animesh/model_splitting/logs/sweep/b-2-6/"
+middling_devs=(1 5 12 25 28 30 32 33 34 35 41 31 42)
+# fragile_devs=(1 3 11 12 17 18 19 22 24 28 32 34 35 36 40 41 42)
+log_path="/home/animesh/model_splitting/logs/sweep/b-1-1/"
 mkdir -p ${log_path}
 
 script_path="/home/animesh/model_splitting/"
@@ -154,7 +154,7 @@ done
 #range_start=(6 6 0 4 4 6 0 0 4 6 6)
 #range_end=(10 10 5 10 10 10 8 8 10 10 10)
 
-pdu_tag="bramble-2-6"
+pdu_tag="bramble-1-1"
 
 
 #for run in {1..30};

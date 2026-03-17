@@ -11,8 +11,7 @@ fi
 
 script_path="/home/animesh/model_splitting/"
 t=$(hostname)
-log_path=${log_path} ${script_path}/temp_speed_reader.sh &
-last_pid=$!
+
 pids=()
 k=0
 #for (( k=$start; k<=$end; k++ )); do
@@ -38,6 +37,19 @@ python3 main_infer_exec.py --rank $rank --world $world_size --ip $master --port 
 #do
 #	torchrun --nnodes $world_size --nproc-per-node 1 --node-rank $rank --master-addr $master --master-port $(( 8123+$j )) ${script_path}/main_infer_exec.py --warmup 0 --iters 1 --cores $cores --images $final_str >> ${log_path}/speed_chronos$t.log  &
 pids+=($!)
+
+while true; 
+do
+     keyword=$(cat ${log_path}/speed_chronos$t.log | grep "Sync done -> model run start" | wc -l)
+     if [[ $keyword -ge 1 ]]
+     then
+          break
+     fi
+     sleep 1
+done
+log_path=${log_path} ${script_path}/temp_speed_reader.sh &
+last_pid=$!
+
 #done
 
       # echo "${i} ${j} loop"

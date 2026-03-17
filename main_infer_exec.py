@@ -8,6 +8,7 @@ from torchvision.models import resnet18, ResNet18_Weights
 from torch.fx.passes.split_module import split_module
 import torch.distributed as dist
 import numpy as np
+from datetime import datetime
 
 @dataclass
 class Args:
@@ -58,7 +59,7 @@ def worker(world, rank, batch_size, num_batches, backend, ip, port, warmup, iter
     example_input = torch.randn(1*batch_size, 3, 224, 224)
 
     pipe_mod.split(example_input, rank, world, input_count=num_batches)
-    print("Split done -> model run start")
+    print(f"{datetime.now()} Split done -> model sync start")
     #rank = dist.get_rank()
     #world = dist.get_world_size()
     # print(f"world{world}")
