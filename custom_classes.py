@@ -278,7 +278,7 @@ class CustomPipeline:
         output_labels_and_times = []
         copy_stage_list = [i for i in range(len(self.stage_list))]
 
-        for ind in range(exepected_inp_count):
+        for ind in range(max(exepected_inp_count, len(sorted_fwd_recvs))):
             #wait for fwd first
             # blocking = False
             if len(sorted_fwd_recvs)>0:
@@ -311,7 +311,6 @@ class CustomPipeline:
                 #print(f"Successful recv for {rank}")
             batched_sends = []            
 
-            output_labels_and_times.append([ind, [], net_end-net_start ])
             #because we are grouping recv and send, sends are automatically async lmao 
             #so blocking as a term is pointless : / -> remove from class
             if rank==0 and inputs!=None:
@@ -321,6 +320,7 @@ class CustomPipeline:
             #use recv tensors
             batched_send_tensors = []
             #print("CHECKING BEFORE")
+            comp_start = time.perf_counter()
             for t in batched_recv_tensors:
                 stage_ind = copy_stage_list.pop(0)
                 stage = self.stage_list[stage_ind]
@@ -353,6 +353,9 @@ class CustomPipeline:
                 output = stage.op.forward(t)
                 batched_send_tensors.append(output)
                 #print(f"Successful recv and forward for {rank} with {output.shape}")
+            comp_end = time.perf_counter()
+            output_labels_and_times.append([ind, [], net_end-net_start, comp_end-comp_start ])
+
             batched_recvs = []
             batched_recv_tensors= []
 
@@ -377,7 +380,7 @@ class CustomPipeline:
                 #this means it's final layer
                 #return output label tensors
                 #TODO for training there might be left-over tasks make sure to add them here too if required
-                output_labels_and_times[-1]=[ind, batched_send_tensors[0], net_end-net_start ]
+                output_labels_and_times[-1]=[ind, batched_send_tensors[0], net_end-net_start, comp_end-comp_start ]
                 
             #else:
             #TODO check bwds and repeat above processes
@@ -392,7 +395,8 @@ class CustomPipeline:
             for w in works:
                 w.wait()
         net_end = time.perf_counter()
-        output_labels_and_times.append([exepected_inp_count, [], net_end-net_start])
+        if len(batched_sends)>0:
+            output_labels_and_times.append([exepected_inp_count, [], net_end-net_start, comp_end-comp_start])
         return output_labels_and_times
 
 

@@ -350,15 +350,17 @@ class FBModel(GenModel):
         only_network=[]
         #if rank==world-1:
         only_outputs = []
+        batch_time = []
             #only_times = []
             #convert output to label
             # print(len(output), len(output[0]))
             #temp_times=[]
             #TODO make perf network times only
-        for ind, t, perf in output:
+        for ind, t, perf, bt in output:
             if rank==world-1:
                 only_outputs.append(t)
             only_network.append(perf)
+            batch_time.append(bt)
             #temp_times.append(perf-start)
             #print(f"For input index {ind} output image is {self.top1_label(self.data_labels, t)}")#, time_taken {(perf-start):.4f} s ")
             #only_times.append(end-start)
@@ -378,7 +380,7 @@ class FBModel(GenModel):
         # custom_comms.simulate_exec()
         
 
-        return (only_outputs, only_times, only_network)
+        return (only_outputs, only_times, only_network, batch_time)
 
 
 
