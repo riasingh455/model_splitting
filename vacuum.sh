@@ -2,11 +2,11 @@
 flag=0
 script_path="/home/animesh/model_splitting/full_sweep/"
 pids=()
-for i in {1..4}; do 
+for i in {1..4}; #do 
 do
 	#echo "i" $i
 	pids=()
-	for j in {1..6}; do
+	for j in {1..6}; #do
 	do
 		#./sweeper.sh $i $j &
 		if [ -f ${script_path}/b_${i}_${j}_ml_sweep.sh ]
