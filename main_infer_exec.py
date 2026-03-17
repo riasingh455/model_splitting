@@ -81,7 +81,9 @@ def worker(world, rank, batch_size, num_batches, backend, ip, port, warmup, iter
 
     #for _ in range(l):
     time_sets = []
+    batch_sets = []
     net_sets = []
+    raw_nets = []
     count_flop=True
     full_iter = warmup+iters
     for it in range(full_iter): #full_iter = warmup+iters
@@ -90,13 +92,16 @@ def worker(world, rank, batch_size, num_batches, backend, ip, port, warmup, iter
     # output = pipe_mod.pipeline_inference(world, rank, args.warmup, args.iters, x0)
     # print(x0.shape)
     #for it in range(args.warmup+args.iters):
-        outputs, times, nets = pipe_mod.custom_pipeline_inf(world, rank, proc_images, count_flop)
+        outputs, times, nets, bts = pipe_mod.custom_pipeline_inf(world, rank, proc_images, count_flop)
         count_flop=False
         if it > warmup:
             if len(times)>0:
                 time_sets.extend(times)
             if len(nets)>0:
                 net_sets.extend(nets)
+                raw_nets.append([round(i,4) for i in nets])
+            if len(bts) > 0:
+                batch_sets.append([round(i,4) for i in bts])
             #if len(outputs)>0:
                 #for output in outputs:
                     #res = pipe_mod.top1_label(data_labels, output)
@@ -107,6 +112,11 @@ def worker(world, rank, batch_size, num_batches, backend, ip, port, warmup, iter
               f"full time*10**9 s/op: {( (10**9)*(np.mean(time_sets)/num_imgs)/pipe_mod.total_flops ):.4f}")
 
         print(f"Time taken by rank:{rank} in total(avg): {np.mean(time_sets):.4f}s "+
+            #   f"Time sets raw:{[time_sets[r:r+world] for r in range(0, len(time_sets), world)]} "+
+            #   f"Batch time sets raw:{[batch_sets[r:r+num_batches] for r in range(0, len(batch_sets), num_batches)]} "+
+              f"Batch time sets raw:{batch_sets} "+
+            #   f"Network sets raw:{[net_sets[r:r+world] for r in range(0, len(net_sets), world)]} "+
+              f"Network sets raw:{raw_nets} "+
               f"on avg per image: {(np.mean(time_sets)/num_imgs):.4f}s "+ 
               f"with std: {(np.std(time_sets)/num_imgs):.4f}s "+
               f"network time: {np.mean(net_sets):.4f}s and network std: {np.std(net_sets):.4f}s "+
@@ -146,7 +156,7 @@ if __name__ == "__main__":
     #pipe_mod.split(example_input, args.rank, args.world, input_count=len(args.images))
     print("Code start -> moving to subprocess") 
     worker(args.world, args.rank, args.batch_size, args.batch_num, args.backend, args.ip, 
-           args.port, args.warmup,args.iters, args.images, device)
+           args.port, args.warmup, args.iters, args.images, device)
 
   #contexts = []
     #for off in range(args.copy):
@@ -162,4 +172,5 @@ if __name__ == "__main__":
 
 
 
-
+#bramble-4-5 middling
+#[1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 16, 17, 20, 24, 25, 26, 27, 30, 31, 32]
