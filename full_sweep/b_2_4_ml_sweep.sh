@@ -176,10 +176,10 @@ pdu_tag="bramble-2-4"
 #for run in {1..30};
 #for run in 1;
 #do
-world_sizes=(4 2 1) #resnet-18 max splits is 6 -> empirically found, but only 4 can run reliably
-batches=(4 1)
-num_batches=(5 3 1)
-for run in 1; #{1..10};
+world_sizes=(4 3 2 1) #resnet-18 max splits is 6 -> empirically found, but only 4 can run reliably
+# batches=(4)
+# num_batches=(10)
+for run in {1..10};
 do 
         #each middling device has 30 selections, 10 total model iterations (5 counted for avg)
         #each world size tests different devices every iteration of the 30 we check here
@@ -190,15 +190,18 @@ do
 	        for (( s=0; s<${#world_sizes[@]}; s++ ));
         	        #for s in 0 1 5 10
 	        do
-	                for (( b=0; b<${#batches[@]}; b++ ));
-	                do
-	                        for (( n=0; n<${#num_batches[@]}; n++ ));
-	                        do
-	                                echo "STARTED RUN ${world_sizes[$s]} ${batches[$b]} ${num_batches[$n]} ${middling_devs[$ind]}"
-					specific_middling_test ${world_sizes[$s]} ${batches[$b]} ${num_batches[$n]} ${middling_devs[$ind]} $pdu_tag 5  #600 $s ${middling_devs[$ind]} $pdu_tag
-	                                echo "FINISHED RUN ${world_sizes[$s]} ${batches[$b]} ${num_batches[$n]} ${middling_devs[$ind]}"
-	                        done
-	                done
+	                # for (( b=0; b<${#batches[@]}; b++ ));
+	                # do
+	                #         for (( n=0; n<${#num_batches[@]}; n++ ));
+	                #         do
+	                                # echo "STARTED RUN ${world_sizes[$s]} ${batches[$b]} ${num_batches[$n]} ${middling_devs[$ind]}"
+	                                echo "STARTED RUN ${world_sizes[$s]} 4 10 ${middling_devs[$ind]}"
+					# specific_middling_test ${world_sizes[$s]} ${batches[$b]} ${num_batches[$n]} ${middling_devs[$ind]} $pdu_tag 5  #600 $s ${middling_devs[$ind]} $pdu_tag
+					specific_middling_test ${world_sizes[$s]} 4 10 ${middling_devs[$ind]} $pdu_tag 5  #600 $s ${middling_devs[$ind]} $pdu_tag
+	                                # echo "FINISHED RUN ${world_sizes[$s]} ${batches[$b]} ${num_batches[$n]} ${middling_devs[$ind]}"
+	                                echo "FINISHED RUN ${world_sizes[$s]} 4 10 ${middling_devs[$ind]}"
+	                #         done
+	                # done
 	        done
 		#break
         done
