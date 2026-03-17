@@ -177,7 +177,7 @@ pdu_tag="bramble-2-6"
 #for run in {1..30};
 #for run in 1;
 #do
-world_sizes=(4 3 2 1) #resnet-18 max splits is 6 -> empirically found, but only 4 can run reliably
+world_sizes=(4 3 2) #resnet-18 max splits is 6 -> empirically found, but only 4 can run reliably
 # batches=(4)
 # num_batches=(10)
 for run in {1..10};
