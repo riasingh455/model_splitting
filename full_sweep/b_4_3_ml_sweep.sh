@@ -154,7 +154,7 @@ done
 #range_start=(6 6 0 4 4 6 0 0 4 6 6)
 #range_end=(10 10 5 10 10 10 8 8 10 10 10)
 
-pdu_tag="bramble-1-2"
+pdu_tag="bramble-4-3"
 
 
 #for run in {1..30};
