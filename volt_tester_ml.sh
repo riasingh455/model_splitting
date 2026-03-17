@@ -40,7 +40,7 @@ pids+=($!)
 
 while true; 
 do
-     keyword=$(cat ${log_path}/speed_chronos$t.log | grep "Sync done -> model run start" | wc -l)
+     keyword=$(cat "${log_path}/speed_chronos${t}.log" | grep "Sync done -> model run start" | wc -l)
      if [[ $keyword -ge 1 ]]
      then
           break
