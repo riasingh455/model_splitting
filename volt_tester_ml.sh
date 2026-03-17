@@ -22,7 +22,7 @@ echo "-${k}- number of processes running"
 #for (( j=1; j<=$k; j++ )); do
      #run buniel on cores
 #torchrun --nnodes $world_size --nproc-per-node 1 --node-rank $rank --master-addr $master --master-port 8123 ${script_path}/main_infer_exec.py --warmup 3 --cores $cores  >> ${log_path}/speed_chronos$t.log  &
-python3 main_infer_exec.py --rank $rank --world $world_size --ip $master --port 8123 --warmup 5 --images /home/animesh/model_splitting/bear.jpeg /home/animesh/model_splitting/penguin.jpeg --batch-size $batch_size --batch-num $batch_num --iters $iters >> ${log_path}/speed_chronos$t.log &
+python3 main_infer_exec.py --rank $rank --world $world_size --ip $master --port 8123 --warmup 1 --images /home/animesh/model_splitting/bear.jpeg /home/animesh/model_splitting/penguin.jpeg --batch-size $batch_size --batch-num $batch_num --iters $iters >> ${log_path}/speed_chronos$t.log &
 #repeat images 30 times
 
 #img1="/home/pi/model_splitting/bear.jpeg"
