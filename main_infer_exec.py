@@ -93,7 +93,7 @@ def worker(world, rank, batch_size, num_batches, backend, ip, port, warmup, iter
     # output = pipe_mod.pipeline_inference(world, rank, args.warmup, args.iters, x0)
     # print(x0.shape)
     #for it in range(args.warmup+args.iters):
-        outputs, times, nets, bts = pipe_mod.custom_pipeline_inf(world, rank, proc_images, count_flop)
+        outputs, times, nets, bts, send_bytes, recv_bytes = pipe_mod.custom_pipeline_inf(world, rank, proc_images, count_flop)
         count_flop=False
         if it > warmup:
             if len(times)>0:
@@ -118,6 +118,8 @@ def worker(world, rank, batch_size, num_batches, backend, ip, port, warmup, iter
               f"Batch time sets raw:{batch_sets} "+
             #   f"Network sets raw:{[net_sets[r:r+world] for r in range(0, len(net_sets), world)]} "+
               f"Network sets raw:{raw_nets} "+
+              f"bytes sent:{send_bytes} "+
+              f"bytes recv:{recv_bytes} "+
               f"on avg per image: {(np.mean(time_sets)/num_imgs):.4f}s "+ 
               f"with std: {(np.std(time_sets)/num_imgs):.4f}s "+
               f"network time: {np.mean(net_sets):.4f}s and network std: {np.std(net_sets):.4f}s "+

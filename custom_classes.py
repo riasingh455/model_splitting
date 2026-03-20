@@ -354,11 +354,11 @@ class CustomPipeline:
                 batched_send_tensors.append(output)
                 #print(f"Successful recv and forward for {rank} with {output.shape}")
             comp_end = time.perf_counter()
-            output_labels_and_times.append([ind, [], net_end-net_start, comp_end-comp_start ])
+            output_labels_and_times.append([ind, [], net_end-net_start, comp_end-comp_start, [] ])
 
             batched_recvs = []
             batched_recv_tensors= []
-
+            send_size = [] #in bytes
             if len(sorted_fwd_sends)>0:
                 recv_op = sorted_fwd_sends.pop(0)
                 # to_send = batched_send_tensors.pop(0)
@@ -372,15 +372,19 @@ class CustomPipeline:
                         send_p2p = dist.P2POp(dist.isend, 
                         to_send, dst)
                         batched_sends.append(send_p2p)
+                        send_size.append(to_send.element_size()*to_send.nelement())
+
 
                         # dist.send(to_send, dst)
                         # print(f"Sent! w/ rank {rank} and ind {ind}")
+                output_labels_and_times.append([exepected_inp_count, [], 0, comp_end-comp_start, [s for s in send_size]])
+                # output_labels_and_times[-1].append([s for s in send_size])
             
             elif len(batched_send_tensors)>0:
                 #this means it's final layer
                 #return output label tensors
                 #TODO for training there might be left-over tasks make sure to add them here too if required
-                output_labels_and_times[-1]=[ind, batched_send_tensors[0], net_end-net_start, comp_end-comp_start ]
+                output_labels_and_times[-1]=[ind, batched_send_tensors[0], net_end-net_start, comp_end-comp_start, [] ]
                 
             #else:
             #TODO check bwds and repeat above processes
@@ -396,7 +400,8 @@ class CustomPipeline:
                 w.wait()
         net_end = time.perf_counter()
         if len(batched_sends)>0:
-            output_labels_and_times.append([exepected_inp_count, [], net_end-net_start, comp_end-comp_start])
+            output_labels_and_times[-1][2] = net_end-net_start
+            # output_labels_and_times.append([exepected_inp_count, [], net_end-net_start, comp_end-comp_start])
         return output_labels_and_times
 
 

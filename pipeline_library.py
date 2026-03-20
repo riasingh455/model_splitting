@@ -355,14 +355,17 @@ class FBModel(GenModel):
         #if rank==world-1:
         only_outputs = []
         batch_time = []
+        only_send_bytes = []
             #only_times = []
             #convert output to label
             # print(len(output), len(output[0]))
             #temp_times=[]
             #TODO make perf network times only
-        for ind, t, perf, bt in output:
+        for ind, t, perf, bt, send_bytes in output:
             if rank==world-1:
                 only_outputs.append(t)
+            if len(send_bytes)>0:
+                only_send_bytes.append(send_bytes)
             only_network.append(perf)
             batch_time.append(bt)
             #temp_times.append(perf-start)
@@ -382,9 +385,10 @@ class FBModel(GenModel):
         #         print(custom_comms.fwd_recv_ops[recv])
 
         # custom_comms.simulate_exec()
-        
+        only_recv_bytes = torch.randn(self.exec_pipe.inp_shape, dtype=self.exec_pipe.inp_dtype)
+        only_recv_bytes = only_recv_bytes.nelement() * only_recv_bytes.element_size()
 
-        return (only_outputs, only_times, only_network, batch_time)
+        return (only_outputs, only_times, only_network, batch_time, only_send_bytes, only_recv_bytes)
 
 
 
