@@ -248,6 +248,8 @@ class CustomPipeline:
     inp_shape: Tuple
     inp_dtype: Any
     device: Any
+    tuple_shapes: Any 
+    tuple_len: int = 0
 
     def __repr__(self):
         return "_".join([str(i) for i in self.stage_list])
@@ -349,8 +351,24 @@ class CustomPipeline:
                     #    output = i #change to stack later
 
 
-
-                output = stage.op.forward(t)
+                if self.tuple_len!=0:
+                    slices=[] 
+                    split_t=[]
+                    #for each tuple shape get full tuple slice
+                    for k in self.tuple_shapes:
+                        c = 1
+                        for l in k:
+                            c*=l
+                        slices.append(c)
+                    counter=0 #to include the first slice
+                    for sl in range(len(slices)):
+                        split_t.append(t[counter:counter+slices[sl]].reshape(tuple(self.tuple_shapes[sl])))
+                        counter+=slices[sl]
+                    t = tuple(split_t)
+                if type(t) == type(tuple([])):
+                    output = stage.op.forward(*t)
+                else:
+                    output = stage.op.forward(t)
                 batched_send_tensors.append(output)
                 #print(f"Successful recv and forward for {rank} with {output.shape}")
             comp_end = time.perf_counter()
@@ -367,6 +385,8 @@ class CustomPipeline:
                     #batched_send_tensors.append(torch.empty(self.inp_shape, dtype=self.inp_dtype, device=self.device))
                     # blocking = recv.blocking
                     for to_send in batched_send_tensors:
+                        if type(to_send) == type(tuple([])):
+                            to_send = torch.cat([to_s.flatten() for to_s in to_send]).flatten()
                         to_send = to_send.contiguous()
                     #assumes stage list and inputs in expected order?
                         send_p2p = dist.P2POp(dist.isend, 

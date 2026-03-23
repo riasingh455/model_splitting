@@ -1,0 +1,11 @@
+Code start -> moving to subprocess
+67 ['conv1', 'bn1', 'relu', 'maxpool', 'layer1']
+[34, 33]
+{'layer3': <SplitPoint.END: 2>, 'fc': <SplitPoint.END: 2>}
+2
+2026-03-22 15:54:08.590821 Split done -> model sync start
+2026-03-22 15:54:38.672652 Sync done -> model run start
+2026-03-22 15:55:08.757978 Sync done -> model run start
+2026-03-22 15:55:38.859140 Sync done -> model run start
+rank 1 FLOP count: 1646215168 and full time*10**9 s/op: 0.0259
+Time taken by rank:1 in total(avg): 0.0852s Batch time sets raw:[[0.0092, 0.0]] Network sets raw:[[0.0757, 0]] bytes sent:[] bytes recv:401408 on avg per image: 0.0426s with std: 0.0000s network time: 0.0378s and network std: 0.0378s network time per img: 0.0189 compute time: 0.0237s compute/network ratio: 0.6257 and throughput 23.4741 img/s
