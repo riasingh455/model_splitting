@@ -6,6 +6,7 @@ from pathlib import Path
 import networkx as nx
 from tqdm import tqdm
 from datetime import datetime
+import inspect
 
 from custom_classes import CustomP2PCommunication, CustomP2POp, CustomPipeline, CustomStage
 
@@ -123,6 +124,61 @@ class GenModel:
         model.fc = nn.Linear(num_features, num)
         self.model = model
 
+
+    def cutter(self, split_num, specific_chunks=[], example_input=None, skip_list=[], max_depth=30):
+        split_model = {k:v for k,v in self.model.named_modules() if k!='' and k not in self.model.named_children() and k not in skip_list}
+        print(len(split_model), list(split_model.keys())[:5])
+    
+        # v = [ v for v in split_model.values()]
+        # print(v[3])
+        # else:
+        #     split_model = {k:v for k,v in self.model.named_children()}
+
+        if split_num > len(split_model):
+            split_num = len(split_model)
+        
+        sizes = [len(split_model) // split_num + (1 if i < len(split_model) % split_num else 0) for i in range(split_num)] if len(specific_chunks)==0 else specific_chunks
+        split_spec = {}
+        split_names = list(split_model.keys())
+        r=0
+        counter=0
+        print(sizes)
+        while counter < len(sizes) and r+sizes[counter] < len(split_model):
+            temp_key = split_names[r+sizes[counter]-1]
+            split_spec[temp_key] = SplitPoint.END
+            r+=sizes[counter]
+            counter+=1
+        if split_names[-1] not in split_spec:
+            split_spec[split_names[-1]] = SplitPoint.END
+
+        print(split_spec)
+        # split_spec = {'layer1.0.bn1': SplitPoint.END, 'layer1.1.relu': SplitPoint.END, 'layer2.0.relu': SplitPoint.END, 'layer2.1.conv1': SplitPoint.END, 'layer3.0.conv1': SplitPoint.END, 'layer3.0.downsample.1': SplitPoint.END, 'layer3.1.bn2': SplitPoint.END, 'layer4.0.conv2': SplitPoint.END, 'layer4.1.conv1': SplitPoint.END, 'fc': SplitPoint.END}
+        # print("overwritten splict spect:", split_spec)
+        pipe=''
+        try:
+            pipe = pipeline(self.model, mb_args=(example_input,), split_spec=split_spec )
+        except Exception as e:
+            skip_list += list(split_spec.keys())
+            # max_depth-=1
+            if max_depth>0:
+                self.cutter(split_num, specific_chunks, example_input, skip_list=skip_list, max_depth=max_depth-1)
+
+
+        print(pipe.num_stages)
+        self.split_spec = split_spec
+        for i in range(split_num-1):
+            k = set(inspect.signature(pipe.get_stage_module(i).forward).parameters.keys())
+            k_next = set(inspect.signature(pipe.get_stage_module(i+1).forward).parameters.keys())
+
+            if len(k.intersection(k_next))>0 and max_depth!=0:
+                print(k, k_next)
+                skip_list+=[split_names[i]]
+                self.cutter(split_num, specific_chunks, example_input, skip_list=skip_list, max_depth=max_depth-1)
+            print(k)
+        
+        # print([inspect.signature(pipe.get_stage_module(v).forward).parameters for v in range(split_num)])
+
+    
     def split(self, example_input, rank:int, split_num:int = 2, input_count:int =1, specific_chunks:List[int] = []):
         #use split policy/spec to implement specific chunks?
         #limits to top-level layers only -> anything below and we need module instead of children here
@@ -188,7 +244,33 @@ class GenModel:
         #we need to stick with this to do the scheduling correctly though unfortunately : /
         #with this we also create the stage communications as well
         #and then trigger early gc by overwriting variables hopefully
-        split_model = {k:v for k,v in self.model.named_children()}
+        # if model_type=="mobilenet":
+        # split_model = {k:v for k,v in self.model.named_children()}
+        # split_model = {k:v for k,v in self.model.named_modules() if k!=''}
+        # split_model = {}
+        # for k, v in self.model.named_modules():
+        #     if k=='' or k in [c for c,_ in self.model.named_children()]:
+        #         continue 
+        #     for v1,v2 in v.named_children():
+        #         print(k, v)
+        #         print("----------------")
+        #         print(v1, v2)
+        #         split_model[f"{k}_{v1}"] = v2
+        #         exit()
+        # print(split_model.keys())
+        # exit()
+
+        # [35, 35, 35, 35, 34, 34] -> for mb small -> specficic chunks: [15,20,25,30,35,48] -> both sum tgo 173
+        # self.cutter(split_num, specific_chunks=[15,20,25,30,35,48], example_input=example_input)
+        # print("final one", self.split_spec)
+        # exit()
+
+        split_model = {k:v for k,v in self.model.named_modules() if k!='' and k not in self.model.named_children()}
+        # v = [ v for v in split_model.values()]
+        # print(v[3])
+        # else:
+        #     split_model = {k:v for k,v in self.model.named_children()}
+
         if split_num > len(split_model):
             split_num = len(split_model)
         
@@ -197,30 +279,66 @@ class GenModel:
         split_names = list(split_model.keys())
         r=0
         counter=0
+        print(len(split_model), list(split_model.keys())[:5])
+        print(sizes)
         while counter < len(sizes) and r+sizes[counter] < len(split_model):
-            temp_key = split_names[r+sizes[counter]]
+            temp_key = split_names[r+sizes[counter]-1]
             split_spec[temp_key] = SplitPoint.END
             r+=sizes[counter]
             counter+=1
         if split_names[-1] not in split_spec:
             split_spec[split_names[-1]] = SplitPoint.END
 
-        # print(split_spec)
+        print(split_spec)
         pipe = pipeline(self.model, mb_args=(example_input,), split_spec=split_spec )
-
+        print(pipe.num_stages)
+        # print([inspect.signature(pipe.get_stage_module(v).forward) for v in range(split_num)])
         #warmup split
         #used to find input and output shapes
         #run on one machine
         stage_shapes = {}
         output = torch.empty(size=tuple(example_input.shape), dtype=example_input.dtype)
+
         for s in range(split_num):
             temp = pipe.get_stage_module(s)
             if s not in stage_shapes:
-                stage_shapes[s] = [tuple(output.shape), output.dtype]
+                # print(type(output), [type(i) for i in output])
+
+                if type(output)!=type(example_input):
+                    #this is when output is a tuple
+                    stage_info = [len(output), [list(o.shape) for o in output]]
+                    new_output = torch.cat([o.flatten() for o in output]).flatten()
+                    stage_info = [tuple(new_output.shape), new_output.dtype] + stage_info
+                    stage_shapes[s]=[i for i in stage_info]
+                    # output = torch.cat(output)
+                    # output = torch.stack(output)
+                #     print("not a tensor again : /")
+                #     skip_list.append(list(split_spec.keys())[s])
+                #     print(skip_list)
+                    # exit()
+                    # self.split(example_input, rank, split_num, input_count, specific_chunks, model_type, skip_list)
+                else:
+                    stage_shapes[s] = [tuple(output.shape), output.dtype ]
             if s == 0:
                 output = temp.forward(example_input)
             else:
-                output = temp.forward(output)
+                if type(output)!=type(example_input):
+                    # print(inspect.signature(temp.forward), type(output))
+                    output = temp.forward(*output)
+                else:
+                    output = temp.forward(output)
+
+                    # try:
+                    #     # print(output)
+                    #     print(inspect.signature(temp.forward))
+                    #     output = temp.forward(output)
+                    # except Exception as e:
+                    #     print(type(output), len(output))
+                    #     # print(output)
+                    #     print(output.shape)
+                    #     print(inspect.signature(temp.forward).parameters)
+                    #     print(len(inspect.signature(temp.forward).parameters))
+                    #     output = temp.forward(output, F.relu())
         
         # print(stage_shapes)
         # exit()
@@ -285,8 +403,13 @@ class GenModel:
                         #         continue
                         stage_pipe.add_edge(p, temp_stage)
 
-        custom_pipe = CustomPipeline(exec_dag=stage_pipe, stage_list=stage_list, unit_map=unit_map, 
-        inp_shape = stage_shapes[rank][0], inp_dtype=stage_shapes[rank][1], device=self.device)
+        if len(stage_shapes[rank]) == 2:
+            custom_pipe = CustomPipeline(exec_dag=stage_pipe, stage_list=stage_list, unit_map=unit_map, 
+        inp_shape = stage_shapes[rank][0], inp_dtype=stage_shapes[rank][1], device=self.device, tuple_shapes=[], tuple_len=0)
+        elif len(stage_shapes[rank]) == 4:
+            custom_pipe = CustomPipeline(exec_dag=stage_pipe, stage_list=stage_list, unit_map=unit_map, 
+        inp_shape = stage_shapes[rank][0], inp_dtype=stage_shapes[rank][1], device=self.device, tuple_len = stage_shapes[rank][2], 
+        tuple_shapes = [[c for c in k] for k in stage_shapes[rank][3]]) #copy array
         self.exec_pipe = custom_pipe
             
         self.model = pipe.get_stage_module(rank)
@@ -332,8 +455,24 @@ class FBModel(GenModel):
             with flop_counter:
                 x=torch.randn(size=self.exec_pipe.inp_shape, 
                           dtype=self.exec_pipe.inp_dtype, device=self.device)
-                
-                self.model.forward(x)
+                if self.exec_pipe.tuple_len!=0:
+                    slices=[] 
+                    split_t=[]
+                    #for each tuple shape get full tuple slice
+                    for k in self.exec_pipe.tuple_shapes:
+                        c = 1
+                        for l in k:
+                            c*=l
+                        slices.append(c)
+                    counter=0 #to include the first slice
+                    for sl in range(len(slices)):
+                        split_t.append(x[counter:counter+slices[sl]].reshape(tuple(self.exec_pipe.tuple_shapes[sl])))
+                        counter+=slices[sl]
+                    x = tuple(split_t)
+                if type(x) == type(tuple([])):
+                    self.model.forward(*x)
+                else:
+                    self.model.forward(x)
                 self.total_flops =  flop_counter.get_total_flops()
         
         custom_comms.punch_out_comms(self.exec_pipe.exec_dag, self.exec_pipe.stage_list, 

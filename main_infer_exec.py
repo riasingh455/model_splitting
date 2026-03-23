@@ -4,7 +4,8 @@ from dataclasses import dataclass
 import pipeline_library 
 import torch
 import torch.multiprocessing as mp
-from torchvision.models import resnet18, ResNet18_Weights
+from torchvision.models import resnet18, ResNet18_Weights, mobilenet_v3_small, MobileNet_V3_Small_Weights# mobilenet_v3_large, MobileNet_V3_Large_Weights
+from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights # mobilenet_v3_large, MobileNet_V3_Large_Weights
 from torch.fx.passes.split_module import split_module
 import torch.distributed as dist
 import numpy as np
@@ -38,10 +39,18 @@ class Args:
 
 def worker(world, rank, batch_size, num_batches, backend, ip, port, warmup, iters, inps, device):
     init_method = f"tcp://{ip}:{port}"
-    dist.init_process_group(backend=backend, init_method=init_method, world_size=world, rank=rank)
+    # dist.init_process_group(backend=backend, init_method=init_method, world_size=world, rank=rank)
     
-    weights = ResNet18_Weights.DEFAULT
-    pretrained_model = resnet18(weights=weights).eval()
+    # weights = ResNet18_Weights.DEFAULT
+    # pretrained_model = resnet18(weights=weights).eval()
+    weights = MobileNet_V3_Small_Weights.DEFAULT
+    pretrained_model = mobilenet_v3_small(weights=weights).eval()
+    # weights = EfficientNet_B0_Weights.DEFAULT
+    # pretrained_model = efficientnet_b0(weights=weights).eval()
+    # c_names = [c for c,_ in pretrained_model.named_children()]
+    # print(c_names, [ [c, d] for c,d in pretrained_model.named_modules() if c!='' and c not in c_names])
+    # exit()
+    # print(len([n for n,_ in pretrained_model.named_modules()]))
     pretrained_model.share_memory()
     pre_proc = weights.transforms()
     data_labels = weights.meta['categories'] #subject to change depending on fine-tuning and training
@@ -136,6 +145,13 @@ def worker(world, rank, batch_size, num_batches, backend, ip, port, warmup, iter
 
 
 if __name__ == "__main__":
+
+    #TODO
+    #first: find the flop limit on the rpis such that below that it doesn't count as "intense", 
+    # think it might be a percentage of the best flop rate possible on the device? currently assuming 10% of maximum flop rate of model but this is model specific
+    #second: See how well we can predict the chunk splits and their performance across the pis
+    #third: (part of second actually) come up with a chunk combo that can be faster if split into more layers rather than less
+
     #mp.set_start_method('spawn') 
     #mp.set_start_method("spawn", force=True)
     args = tyro.cli(Args)

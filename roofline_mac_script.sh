@@ -1,10 +1,15 @@
 #!/bin/bash
 
 #PRE_REQ activate for pytorch environment if applicable 
-log_path="/Users/animeshnd//model_splitting/logs/roofline/"
+# log_path="/Users/animeshnd//model_splitting/logs/roofline/"
+# log_path="/Users/animeshnd//model_splitting/logs/roofline/resnet_18"
+# log_path="/Users/animeshnd//model_splitting/logs/roofline/ef_b0"
+log_path="/Users/animeshnd//model_splitting/logs/roofline/mb_small"
 script_path="/Users/animeshnd//model_splitting/"
 
-for world in {1..5};
+for world in {1..100};
+# for world in 1 5 10 20 50 100;
+# for world in 10;
 do
         # mkdir -p ${log_path}/${world}_size 
 
@@ -12,10 +17,11 @@ do
         batch_num=1
         # batch_size=4
         iters=2
-        for (( batch_size = 1; batch_size < 10; batch_size++ ))
+        #(( batch_size = 1; batch_size < 10; batch_size++ ))
+        for batch_size in 2 4 6 8 
+        # for batch_size in 2
         do
                 mkdir -p ${log_path}/${world}_size/${batch_size}/ 
-
                 for (( i = 0 ; i < ${world}; i++ ))
                 do
                         val=${good_ones[$i]}
@@ -24,6 +30,13 @@ do
                         #wait
                 done
                 wait
+
+                #if logs failed, end exp then and there
+                #0 as a file should always be there, if not, even more reasons to kill the experiment right here and now
+                if [[ $( cat ${log_path}/${world}_size/${batch_size}/speed_chronos0.log | grep "Time taken by rank"  | wc -l ) -eq 0 ]]
+                then
+                        exit
+                fi
         done
         # wait
 done
