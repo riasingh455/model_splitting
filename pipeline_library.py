@@ -179,7 +179,7 @@ class GenModel:
         # print([inspect.signature(pipe.get_stage_module(v).forward).parameters for v in range(split_num)])
 
     
-    def split(self, example_input, rank:int, split_num:int = 2, input_count:int =1, specific_chunks:List[int] = []):
+    def split(self, example_input, rank:int, split_num:int = 2, input_count:int =1,  model_split_type="children", specific_chunks:List[int] = []):
         #use split policy/spec to implement specific chunks?
         #limits to top-level layers only -> anything below and we need module instead of children here
         #don't really see why it can't be modules/graph modules?
@@ -264,8 +264,11 @@ class GenModel:
         # self.cutter(split_num, specific_chunks=[15,20,25,30,35,48], example_input=example_input)
         # print("final one", self.split_spec)
         # exit()
-
-        split_model = {k:v for k,v in self.model.named_modules() if k!='' and k not in self.model.named_children()}
+        split_model = {}
+        if model_split_type=="modules":
+            split_model = {k:v for k,v in self.model.named_modules() if k!='' and k not in self.model.named_children()}
+        elif model_split_type=="children":
+            split_model = {k:v for k,v in self.model.named_children()}
         # v = [ v for v in split_model.values()]
         # print(v[3])
         # else:
