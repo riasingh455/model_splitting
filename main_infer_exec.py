@@ -26,6 +26,8 @@ class Args:
     copy: int = 1
     cores:int = 1
     device: str = "cpu"
+    model_type:str = "resnet18"
+    model_split_type:str = "children"
     image: str = "./bear.jpeg"
     images: tuple[str,...] = () #if multiple images provided, each image run an iters+warmups number of times 
     iters:int = 5 #number of times to inference a single image and measures time
@@ -37,16 +39,23 @@ class Args:
         return "gloo" if self.device=="cpu" else "nccl"
 
 
-def worker(world, rank, batch_size, num_batches, backend, ip, port, warmup, iters, inps, device):
+def worker(world, rank, batch_size, num_batches, backend, ip, port, warmup, iters, inps, model_type, model_split_type, device):
     init_method = f"tcp://{ip}:{port}"
-    # dist.init_process_group(backend=backend, init_method=init_method, world_size=world, rank=rank)
+    print(f"Model {model_type} and split {model_split_type}")
+    dist.init_process_group(backend=backend, init_method=init_method, world_size=world, rank=rank)
     
-    # weights = ResNet18_Weights.DEFAULT
-    # pretrained_model = resnet18(weights=weights).eval()
-    weights = MobileNet_V3_Small_Weights.DEFAULT
-    pretrained_model = mobilenet_v3_small(weights=weights).eval()
-    # weights = EfficientNet_B0_Weights.DEFAULT
-    # pretrained_model = efficientnet_b0(weights=weights).eval()
+    weights = ResNet18_Weights.DEFAULT
+    pretrained_model = resnet18(weights=weights).eval()
+    if model_type=="resnet18":
+        weights = ResNet18_Weights.DEFAULT
+        pretrained_model = resnet18(weights=weights).eval()
+    elif model_type=="mbv3_small":
+        weights = MobileNet_V3_Small_Weights.DEFAULT
+        pretrained_model = mobilenet_v3_small(weights=weights).eval()
+    elif model_type=="eb0":
+        weights = EfficientNet_B0_Weights.DEFAULT
+        pretrained_model = efficientnet_b0(weights=weights).eval()
+    
     # c_names = [c for c,_ in pretrained_model.named_children()]
     # print(c_names, [ [c, d] for c,d in pretrained_model.named_modules() if c!='' and c not in c_names])
     # exit()
@@ -67,7 +76,7 @@ def worker(world, rank, batch_size, num_batches, backend, ip, port, warmup, iter
 
     example_input = torch.randn(1*batch_size, 3, 224, 224)
 
-    pipe_mod.split(example_input, rank, world, input_count=num_batches)
+    pipe_mod.split(example_input, rank, world, model_split_type=model_split_type, input_count=num_batches)
     print(f"{datetime.now()} Split done -> model sync start", flush=True)
     #rank = dist.get_rank()
     #world = dist.get_world_size()
@@ -175,7 +184,7 @@ if __name__ == "__main__":
     #pipe_mod.split(example_input, args.rank, args.world, input_count=len(args.images))
     print("Code start -> moving to subprocess", flush=True) 
     worker(args.world, args.rank, args.batch_size, args.batch_num, args.backend, args.ip, 
-           args.port, args.warmup, args.iters, args.images, device)
+           args.port, args.warmup, args.iters, args.images, args.model_type, args.model_split_type, device)
 
   #contexts = []
     #for off in range(args.copy):

@@ -1,0 +1,12 @@
+Code start -> moving to subprocess
+Model mbv3_small and split children
+3 ['features', 'avgpool', 'classifier']
+[2, 1]
+{'avgpool': <SplitPoint.END: 2>, 'classifier': <SplitPoint.END: 2>}
+2
+2026-03-24 19:39:22.675665 Split done -> model sync start
+2026-03-24 19:39:52.813312 Sync done -> model run start
+2026-03-24 19:40:22.913847 Sync done -> model run start
+2026-03-24 19:40:53.040166 Sync done -> model run start
+rank 0 FLOP count: 219586304 and full time*10**9 s/op: 0.2218
+Time taken by rank:0 in total(avg): 0.0974s Batch time sets raw:[[0.0953, 0.0953]] Network sets raw:[[0, 0.0002]] bytes sent:[[4608]] bytes recv:1204224 on avg per image: 0.0487s with std: 0.0000s network time: 0.0001s and network std: 0.0001s network time per img: 0.0001 compute time: 0.0486s compute/network ratio: 446.4135 and throughput 20.5321 img/s
