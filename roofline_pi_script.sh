@@ -36,7 +36,7 @@ timeout () {
 }
 
 
-
+source /home/animesh/model_splitting/pi-torch/bin/activate
 log_path="/home/animesh//model_splitting/logs/roofline/"
 script_path="/home/animesh//model_splitting/"
 
@@ -60,7 +60,7 @@ do
         mkdir -p ${log_path}/${world}_size/${batch_size}/ 
         
         # val=${good_ones[$i]}
-        python3 ${script_path}/main_infer_exec.py --rank $i --world $world --ip $master --port 8123 --warmup 1 --images /home/animesh//model_splitting/bear.jpeg /home/animesh//model_splitting/penguin.jpeg --batch-size $batch_size --batch-num $batch_num --iters $iters --model-type $model_type --model-split-type $model_split >> ${log_path}/${world}_size/${batch_size}/speed_chronos${t}.log &
+        python3 ${script_path}/main_infer_exec.py --rank $rank --world $world --ip $master --port 8123 --warmup 1 --images /home/animesh//model_splitting/bear.jpeg /home/animesh//model_splitting/penguin.jpeg --batch-size $batch_size --batch-num $batch_num --iters $iters --model-type $model_type --model-split-type $model_split >> ${log_path}/${world}_size/${batch_size}/speed_chronos${t}.log &
         pids+=($!)
         #copy=1 inp_len=1 log_path="${log_path}/trial/" world_size=$world rank=$i master=$master cores=1 srun -N 1 --nodelist=$val ${script_path}/volt_tester_ml.sh 4 0  > /dev/null&
         #wait
