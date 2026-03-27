@@ -12,8 +12,9 @@ rng_gen () {
 }
 
 node_select () {
-        node_list=$(sinfo -N | grep "idle" | grep -v "idle\*" | grep "${node_prefix}" | awk '{print$1}')
-        node_list=($node_list)
+        # valid_nodes=($(cat ${path_prefix}/full_sweep/${node_prefix}_middling))
+        all_nodes=$(sinfo -N | grep "idle" | grep -v "idle\*" | grep "${node_prefix}" | awk '{print$1}')
+        node_list=( $(for i in ${all_nodes[@]}; do [[ $(cat ${path_prefix}/full_sweep/${node_prefix}_middling | grep -w "${all_nodes[$i]}" | wc -l) -gt 0 ]] && echo "${all_nodes[$i]}"; done) )
         ind_arr=( $(rng_gen "${#node_list[@]}") )
         node_select=( $(for i in ${ind_arr[@]}; do echo "${node_list[$i]}"; done) )
         echo "${node_select[@]}"
@@ -22,6 +23,7 @@ node_select () {
 model_type=$1
 model_split=$2
 node_prefix=$3
+path_prefix="/home/animesh/model_splitting/"
 
 if [[ -z $model_type ]] || [[ -z $model_split ]] || [[ -z $node_prefix ]]
 then
@@ -34,9 +36,9 @@ do
     counter=0
     for n in ${nodes[@]}
     do
-        world=$world rank=$counter master=${nodes[0]} model_type=$model_type model_split=$model_split srun --nodelist=$n roofline_pi_script.sh &
-	counter=$(( $counter+1 ))
-	#echo $n, $world
+    #     world=$world rank=$counter master=${nodes[0]} model_type=$model_type model_split=$model_split srun --nodelist=$n roofline_pi_script.sh &
+	# counter=$(( $counter+1 ))
+	echo $n, $world
     done
     echo "Selected ${nodes[@]} ${world}"
     wait
