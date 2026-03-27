@@ -44,6 +44,8 @@ do
     		done
     		echo "Selected ${nodes[@]} ${world}"
     		wait
+                mkdir -p ${path_prefix}/roofline/${model_type}_${model_split}/${repeat}/
+                mv ${path_prefix}/roofline/${model_type}_${model_split}/${world}_size ${path_prefix}/roofline/${model_type}_${model_split}/${repeat}/
     		#break
 	done
 done
