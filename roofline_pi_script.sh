@@ -12,19 +12,19 @@ killer () {
 }
 
 timeout () {
-        echo "timeout started for ${log_path}/${world}_size/${batch_size}/speed_chronos${t}.log"
+        echo "timeout started for ${log_path}/${world}_size/${batch_size}_${batch_num}/speed_chronos${t}.log"
         sleep 180
-        keyword=$(cat "${log_path}/${world}_size/${batch_size}/speed_chronos${t}.log" | grep "Sync done -> model run start" | wc -l)
+        keyword=$(cat "${log_path}/${world}_size/${batch_size}_${batch_num}/speed_chronos${t}.log" | grep "Sync done -> model run start" | wc -l)
         if [[ $keyword -ge 1 ]]
         then
                 echo "checking second timeout"
                 sleep 60
-                if [[ $( cat ${log_path}/${world}_size/${batch_size}/speed_chronos${t}.log | grep "Time taken by rank"  | wc -l ) -eq 0 ]]
+                if [[ $( cat ${log_path}/${world}_size/${batch_size}_${batch_num}/speed_chronos${t}.log | grep "Time taken by rank"  | wc -l ) -eq 0 ]]
                 then 
                         echo "died by second timeout"
                         killer
                 else
-                        echo "timeout for ${log_path}/${world}_size/${batch_size}/speed_chronos${t}.log not triggered!"
+                        echo "timeout for ${log_path}/${world}_size/${batch_size}_${batch_num}/speed_chronos${t}.log not triggered!"
                         return
                 fi
 
@@ -50,51 +50,52 @@ fi
 log_path="/home/animesh//model_splitting/logs/roofline/${model_type}_${model_split}/"
 
 
-batch_num=1
 iters=2
-# for batch_size in 2 4 6 8 
-for batch_size in 2 4 
-# for batch_size in 2
+
+for batch_num in 1 2 5 10
 do
-        pids=()
-        mkdir -p ${log_path}/${world}_size/${batch_size}/ 
-        
-        # val=${good_ones[$i]}
-        python3 ${script_path}/main_infer_exec.py --cores 4 --rank $rank --world $world --ip $master --port 8123 --warmup 1 --images /home/animesh//model_splitting/bear.jpeg /home/animesh//model_splitting/penguin.jpeg --batch-size $batch_size --batch-num $batch_num --iters $iters --model-type $model_type --model-split-type $model_split >> ${log_path}/${world}_size/${batch_size}/speed_chronos${t}.log &
-        pids+=($!)
-        #copy=1 inp_len=1 log_path="${log_path}/trial/" world_size=$world rank=$i master=$master cores=1 srun -N 1 --nodelist=$val ${script_path}/volt_tester_ml.sh 4 0  > /dev/null&
-        #wait
+        # for batch_size in 2 4 6 8 
+        for batch_size in 2 4 10
+        # for batch_size in 2
+        do
+                pids=()
+                mkdir -p ${log_path}/${world}_size/${batch_size}_${batch_num}/ 
+                
+                # val=${good_ones[$i]}
+                python3 ${script_path}/main_infer_exec.py --cores 4 --rank $rank --world $world --ip $master --port 8123 --warmup 1 --images /home/animesh//model_splitting/bear.jpeg /home/animesh//model_splitting/penguin.jpeg --batch-size $batch_size --batch-num $batch_num --iters $iters --model-type $model_type --model-split-type $model_split >> ${log_path}/${world}_size/${batch_size}_${batch_num}/speed_chronos${t}.log &
+                pids+=($!)
+                #copy=1 inp_len=1 log_path="${log_path}/trial/" world_size=$world rank=$i master=$master cores=1 srun -N 1 --nodelist=$val ${script_path}/volt_tester_ml.sh 4 0  > /dev/null&
+                #wait
 
-        timeout &
+                timeout &
 
-        while true; 
-        do      
-                keyword=$(cat "${log_path}/${world}_size/${batch_size}/speed_chronos${t}.log" | grep "Sync done -> model run start" | wc -l)
-                if [[ $keyword -ge 1 ]]
+                while true; 
+                do      
+                        keyword=$(cat "${log_path}/${world}_size/${batch_size}_${batch_num}/speed_chronos${t}.log" | grep "Sync done -> model run start" | wc -l)
+                        if [[ $keyword -ge 1 ]]
+                        then
+                                break
+                        fi
+                        sleep 1
+                done
+                #forced to use 0 since all of this on the same machine
+                mac_ver=0 log_path="${log_path}/${world}_size/${batch_size}_${batch_num}/" ${script_path}/temp_speed_reader.sh &
+                last_pid=$!
+
+
+                wait "${pids[@]}"
+
+
+                #if logs failed, end exp then and there
+                #0 as a file should always be there, if not, even more reasons to kill the experiment right here and now
+                if [[ $( cat ${log_path}/${world}_size/${batch_size}_${batch_num}/speed_chronos${t}.log | grep "Time taken by rank"  | wc -l ) -eq 0 ]]
                 then
-                        break
+                        kill -9 $last_pid
+                        kill -9 "${pids[@]}"
+                        exit
                 fi
-                sleep 1
-        done
-        #forced to use 0 since all of this on the same machine
-        mac_ver=0 log_path="${log_path}/${world}_size/${batch_size}/" ${script_path}/temp_speed_reader.sh &
-        last_pid=$!
-
-
-        wait "${pids[@]}"
-
-
-        #if logs failed, end exp then and there
-        #0 as a file should always be there, if not, even more reasons to kill the experiment right here and now
-        if [[ $( cat ${log_path}/${world}_size/${batch_size}/speed_chronos${t}.log | grep "Time taken by rank"  | wc -l ) -eq 0 ]]
-        then
                 kill -9 $last_pid
-                kill -9 "${pids[@]}"
-                exit
-        fi
-        kill -9 $last_pid
+        done
+        # wait
 done
-# wait
-
-
 
