@@ -13,12 +13,12 @@ killer () {
 
 timeout () {
         echo "timeout started for ${log_path}/${world}_size/${batch_size}_${batch_num}/speed_chronos${t}.log"
-        sleep 180
+        sleep 300
         keyword=$(cat "${log_path}/${world}_size/${batch_size}_${batch_num}/speed_chronos${t}.log" | grep "Sync done -> model run start" | wc -l)
         if [[ $keyword -ge 1 ]]
         then
                 echo "checking second timeout"
-                sleep 60
+                sleep 180
                 if [[ $( cat ${log_path}/${world}_size/${batch_size}_${batch_num}/speed_chronos${t}.log | grep "Time taken by rank"  | wc -l ) -eq 0 ]]
                 then 
                         echo "died by second timeout"
@@ -55,7 +55,7 @@ iters=2
 for batch_num in 1 2 5 10
 do
         # for batch_size in 2 4 6 8 
-        for batch_size in 2 4 10
+        for batch_size in 2 4
         # for batch_size in 2
         do
                 pids=()
