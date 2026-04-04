@@ -38,14 +38,14 @@ do
     		counter=0
     		for n in ${nodes[@]}
     		do
-         		world=$world rank=$counter master=${nodes[0]} model_type=$model_type model_split=$model_split srun --nodelist=$n roofline_pi_script.sh &
+         		node_prefix=$node_prefix world=$world rank=$counter master=${nodes[0]} model_type=$model_type model_split=$model_split srun --nodelist=$n roofline_pi_script.sh &
 	 		counter=$(( $counter+1 ))
 			#echo $n, $world
     		done
     		echo "Selected ${nodes[@]} ${world}"
     		wait
-                mkdir -p ${path_prefix}/logs/roofline/${model_type}_${model_split}/${repeat}/
-                mv ${path_prefix}/logs/roofline/${model_type}_${model_split}/${world}_size ${path_prefix}/logs/roofline/${model_type}_${model_split}/${repeat}/
+                mkdir -p ${path_prefix}/logs/roofline/${node_prefix}/${model_type}_${model_split}/${repeat}/
+                mv ${path_prefix}/logs/roofline/${node_prefix}/${model_type}_${model_split}/${world}_size ${path_prefix}/logs/roofline/${node_prefix}/${model_type}_${model_split}/${repeat}/
     		#break
 	done
 done

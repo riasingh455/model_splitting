@@ -47,7 +47,7 @@ then
         echo "Please enter model type (resnet18, mbv3_small, eb0) and model split (children, modules)" && exit
 fi
 
-log_path="/home/animesh//model_splitting/logs/roofline/${model_type}_${model_split}/"
+log_path="/home/animesh//model_splitting/logs/roofline/${node_prefix}/${model_type}_${model_split}/"
 
 
 iters=2
