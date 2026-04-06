@@ -1,0 +1,13 @@
+Code start -> moving to subprocess
+[Gloo] Rank 3 is connected to 4 peer ranks. Expected number of connected peer ranks is : 4
+Model resnet18 and split children
+10 ['conv1', 'bn1', 'relu', 'maxpool', 'layer1']
+[2, 2, 2, 2, 2]
+{'bn1': <SplitPoint.END: 2>, 'maxpool': <SplitPoint.END: 2>, 'layer2': <SplitPoint.END: 2>, 'layer4': <SplitPoint.END: 2>, 'fc': <SplitPoint.END: 2>}
+5
+2026-04-05 01:14:26.023322 Split done -> model sync start
+2026-04-05 01:15:01.062041 Sync done -> model run start
+2026-04-05 01:15:41.574245 Sync done -> model run start
+2026-04-05 01:16:21.971513 Sync done -> model run start
+rank 3 FLOP count: 3288334336 and full time*10**9 s/op: 0.1582
+Time taken by rank:3 in total(avg): 10.4015s Batch time sets raw:[[0.8403, 0.8403, 0.8947, 0.8947, 0.8219, 0.8219, 0.7721, 0.7721, 0.9169, 0.9169, 0.7992, 0.7992, 0.8395, 0.8395, 0.7574, 0.7574, 0.902, 0.902, 0.7906, 0.7906]] Network sets raw:[[1.2989, 0, 0.1004, 0, 0.2075, 0, 0.0304, 0, 0.0727, 0, 0.0344, 0, 0.1248, 0, 0.0287, 0, 0.1075, 0, 0.0295, 0.0022]] bytes sent:[[200704], [200704], [200704], [200704], [200704], [200704], [200704], [200704], [200704], [200704]] bytes recv:802816 on avg per image: 0.5201s with std: 0.0000s network time: 0.1019s and network std: 0.2801s network time per img: 0.0051 compute time: 0.5150s compute/network ratio: 5.0560 and throughput 1.9228 img/s
