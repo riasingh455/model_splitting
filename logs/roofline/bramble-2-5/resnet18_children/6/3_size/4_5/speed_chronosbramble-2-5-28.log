@@ -1,0 +1,13 @@
+Code start -> moving to subprocess
+[Gloo] Rank 1 is connected to 2 peer ranks. Expected number of connected peer ranks is : 2
+Model resnet18 and split children
+10 ['conv1', 'bn1', 'relu', 'maxpool', 'layer1']
+[4, 3, 3]
+{'maxpool': <SplitPoint.END: 2>, 'layer3': <SplitPoint.END: 2>, 'fc': <SplitPoint.END: 2>}
+3
+2026-04-04 16:12:40.672885 Split done -> model sync start
+2026-04-04 16:13:19.843826 Sync done -> model run start
+2026-04-04 16:14:03.907738 Sync done -> model run start
+2026-04-04 16:14:47.627834 Sync done -> model run start
+rank 1 FLOP count: 10276044800 and full time*10**9 s/op: 0.0627
+Time taken by rank:1 in total(avg): 12.8917s Batch time sets raw:[[2.4846, 2.4846, 2.3431, 2.3431, 2.3288, 2.3288, 2.3359, 2.3359, 2.3419, 2.3419]] Network sets raw:[[0.563, 0, 0.1155, 0, 0.1165, 0, 0.1138, 0, 0.1171, 0.0112]] bytes sent:[[802816], [802816], [802816], [802816], [802816]] bytes recv:3211264 on avg per image: 0.6446s with std: 0.0000s network time: 0.1037s and network std: 0.1622s network time per img: 0.0052 compute time: 0.6394s compute/network ratio: 6.1649 and throughput 1.5514 img/s
