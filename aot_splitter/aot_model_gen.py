@@ -30,10 +30,10 @@ def stat_generator(pipe, world, model_type, model_split_type, example_input):
             if type(output)!=type(example_input):
                 stage_info = [len(output), [list(o.shape) for o in output]]
                 new_output = torch.cat([o.flatten() for o in output]).flatten()
-                stage_info = [tuple(new_output.shape), new_output.dtype] + stage_info
+                stage_info = [tuple(new_output.shape), f"{new_output.dtype}"] + stage_info
                 stage_shapes[rank] = [i for i in stage_info]
             else:
-                stage_shapes[rank] = [tuple(output.shape), output.dtype]
+                stage_shapes[rank] = [tuple(output.shape), f"{output.dtype}"]
         flop_counter = FlopCounterMode(display=False, depth=None)
         with flop_counter:
             if rank==0:
@@ -52,6 +52,15 @@ def stat_generator(pipe, world, model_type, model_split_type, example_input):
                     output = temp.forward(output)
             if rank not in flop_stages:
                 flop_stages[rank] = flop_counter.get_total_flops()
+    #additional rank for final output
+    if world not in stage_shapes:
+        if type(output)!=type(example_input):
+            stage_info = [len(output), [list(o.shape) for o in output]]
+            new_output = torch.cat([o.flatten() for o in output]).flatten()
+            stage_info = [tuple(new_output.shape), f"{new_output.dtype}"] + stage_info
+            stage_shapes[world] = [i for i in stage_info]
+        else:
+            stage_shapes[world] = [tuple(output.shape), f"{output.dtype}"]
     flop_file=f"{app_dir}/flop.dict"
     f=open(flop_file, "w")
     f.write(f"{flop_stages}\n")
