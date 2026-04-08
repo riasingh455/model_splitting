@@ -1,0 +1,41 @@
+Code start -> moving to subprocess
+[Gloo] Rank 0 is connected to 1 peer ranks. Expected number of connected peer ranks is : 1
+Model resnet18 and split children
+10 ['conv1', 'bn1', 'relu', 'maxpool', 'layer1']
+[5, 5]
+{'layer1': <SplitPoint.END: 2>, 'fc': <SplitPoint.END: 2>}
+2
+2026-04-07 03:02:24.085691 Split done -> model sync start
+2026-04-07 03:02:55.846857 Sync done -> model run start
+2026-04-07 03:03:29.850520 Sync done -> model run start
+2026-04-07 03:04:04.008505 Sync done -> model run start
+2026-04-07 03:04:38.005188 Sync done -> model run start
+2026-04-07 03:05:11.962659 Sync done -> model run start
+2026-04-07 03:05:46.015440 Sync done -> model run start
+2026-04-07 03:06:19.986476 Sync done -> model run start
+2026-04-07 03:06:53.791162 Sync done -> model run start
+2026-04-07 03:07:27.839178 Sync done -> model run start
+2026-04-07 03:08:01.837265 Sync done -> model run start
+2026-04-07 03:08:35.789267 Sync done -> model run start
+2026-04-07 03:09:09.732107 Sync done -> model run start
+2026-04-07 03:09:43.713307 Sync done -> model run start
+2026-04-07 03:10:17.789868 Sync done -> model run start
+2026-04-07 03:10:51.649078 Sync done -> model run start
+2026-04-07 03:11:25.611915 Sync done -> model run start
+2026-04-07 03:11:59.394107 Sync done -> model run start
+2026-04-07 03:12:33.383665 Sync done -> model run start
+2026-04-07 03:13:07.362093 Sync done -> model run start
+2026-04-07 03:13:41.393724 Sync done -> model run start
+2026-04-07 03:14:15.459272 Sync done -> model run start
+2026-04-07 03:14:49.367480 Sync done -> model run start
+2026-04-07 03:15:23.174710 Sync done -> model run start
+2026-04-07 03:15:57.138987 Sync done -> model run start
+2026-04-07 03:16:31.134775 Sync done -> model run start
+2026-04-07 03:17:05.251526 Sync done -> model run start
+2026-04-07 03:17:39.090937 Sync done -> model run start
+2026-04-07 03:18:12.962640 Sync done -> model run start
+2026-04-07 03:18:46.851316 Sync done -> model run start
+2026-04-07 03:19:20.794079 Sync done -> model run start
+2026-04-07 03:19:54.763234 Sync done -> model run start
+rank 0 FLOP count: 4643487744 and full time*10**9 s/op: 0.0746
+Time taken by rank:0 in total(avg): 1.3849s Batch time sets raw:[[1.3866, 1.3866], [1.2949, 1.2949], [1.3976, 1.3976], [1.3265, 1.3265], [1.3428, 1.3428], [1.3286, 1.3286], [1.3742, 1.3742], [1.2676, 1.2676], [1.3087, 1.3087], [1.3256, 1.3256], [1.2872, 1.2872], [1.3069, 1.3069], [1.3094, 1.3094], [1.2636, 1.2636], [1.308, 1.308], [1.2604, 1.2604], [1.3068, 1.3068], [1.3478, 1.3478], [1.2568, 1.2568], [1.3324, 1.3324], [1.3351, 1.3351], [1.3165, 1.3165], [1.3326, 1.3326], [1.2991, 1.2991], [1.3239, 1.3239], [1.2735, 1.2735], [1.3563, 1.3563], [1.3082, 1.3082], [1.3296, 1.3296]] Network sets raw:[[0, 0.0637], [0, 0.0634], [0, 0.0651], [0, 0.0642], [0, 0.0642], [0, 0.0639], [0, 0.0667], [0, 0.0661], [0, 0.0699], [0, 0.0663], [0, 0.0661], [0, 0.0658], [0, 0.0659], [0, 0.065], [0, 0.0655], [0, 0.0662], [0, 0.0665], [0, 0.0668], [0, 0.0655], [0, 0.068], [0, 0.0658], [0, 0.0682], [0, 0.0599], [0, 0.0655], [0, 0.0663], [0, 0.0659], [0, 0.0643], [0, 0.0659], [0, 0.0656]] bytes sent:[[3211264]] bytes recv:2408448 on avg per image: 0.3462s with std: 0.0087s network time: 0.0328s and network std: 0.0328s network time per img: 0.0082 compute time: 0.3380s compute/network ratio: 10.3078 and throughput 2.8884 img/s
