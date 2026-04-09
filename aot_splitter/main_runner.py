@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from ast import literal_eval 
 import time
 from datetime import datetime
-import dill as pickle
+# import dill as pickle 
 
 import torch
 import torch.export as export
@@ -35,13 +35,14 @@ def mp_proc(model, input_tensor, output_tensor, no_star, store):
     # model = export.load(model).module()
     # et=time.perf_counter()
     # print(et-st)
-    st=time.perf_counter()
-    model = export.load(model).module()
-    # runtime = Runtime.get()
-    # program = runtime.load_program(model)
-    # method = program.load_method("forward")
-    et=time.perf_counter()
-    print(et-st)
+    # st=time.perf_counter()
+    # model = export.load(model).module()
+    # # runtime = Runtime.get()
+    # # program = runtime.load_program(model)
+    # # method = program.load_method("forward")
+    # et=time.perf_counter()
+    # print(et-st)
+    print(f"here {store}")
     with torch.no_grad():
         output = model.forward(input_tensor) if no_star else model.forward(*input_tensor)
     # output = method.execute([input_tensor]) if no_star else method.execute([*input_tensor])#model.forward(*input_tensor)
@@ -91,12 +92,12 @@ def custom_pipeline(aot_dir, batch_num, world, rank, cores, inputs=None):
             exp_recvs.append(recv_op)    
     
     split_pt = f"{aot_dir}/split_{rank}.pt2"
-    
-    # mod = export.load(split_pt).module()
+    split_pt = f"{aot_dir}/exe_split_{rank}.pte.exp"
+    mod = export.load(split_pt).module()
     # mod = torch._inductor.aoti_load_package("/Users/animeshnd/model_splitting/aot_splitter/resnet18_children_1_1/ind_split_0.pt2")
     
     # mod.eval()
-    # mod.share_memory()
+    mod.share_memory()
     total_times=[]
     comms=[]
     net_times=[]
@@ -154,7 +155,7 @@ def custom_pipeline(aot_dir, batch_num, world, rank, cores, inputs=None):
         # mp_res.wait(300)
         for c in range(cores):
             store=False if c!=0 else True
-            p = mp.Process(target=mp_proc, args=(f"{aot_dir}/exe_split_{rank}.pte.exp", recv_tensor, mp_collect_tensor, no_star, store, ))
+            p = mp.Process(target=mp_proc, args=(mod, recv_tensor, mp_collect_tensor, no_star, store, ))
             # p = mp.Process(target=mp_proc, args=(method, recv_tensor, mp_collect_tensor, no_star, store, ))
             # p = mp.Process(target=mp_proc, args=(pickle.dumps(mod, recurse=True, byref=True), recv_tensor, mp_collect_tensor, no_star, store, ))
             p.start()
@@ -217,7 +218,7 @@ def top1_label(model_type, output):
     return f"{idx}: {categories[idx]}" if type(idx)!=list else ", ".join([str(categories[i]) for i in idx])
 
 if __name__ == "__main__":
-    mp.set_start_method("spawn")
+    mp.set_start_method("fork")
     set_core_behavior(1)
     args = tyro.cli(Args)
     print(f"Model {args.model_type} and split {args.model_split_type}")
