@@ -36,16 +36,17 @@ def mp_proc(model, input_tensor, output_tensor, no_star, store):
     # et=time.perf_counter()
     # print(et-st)
     st=time.perf_counter()
-    runtime = Runtime.get()
-    program = runtime.load_program(model)
-    method = program.load_method("forward")
+    model = export.load(model).module()
+    # runtime = Runtime.get()
+    # program = runtime.load_program(model)
+    # method = program.load_method("forward")
     et=time.perf_counter()
     print(et-st)
-    # with torch.no_grad():
-        # output = model.forward(input_tensor) if no_star else model.forward(*input_tensor)
-    output = method.execute([input_tensor]) if no_star else method.execute([*input_tensor])#model.forward(*input_tensor)
+    with torch.no_grad():
+        output = model.forward(input_tensor) if no_star else model.forward(*input_tensor)
+    # output = method.execute([input_tensor]) if no_star else method.execute([*input_tensor])#model.forward(*input_tensor)
     # print(len(output), type(output), type(output[0]))
-    output = output[0]
+    # output = output[0]
     #fit into output tensor shape
     # et=time.perf_counter()
     # print(et-st)
@@ -153,7 +154,7 @@ def custom_pipeline(aot_dir, batch_num, world, rank, cores, inputs=None):
         # mp_res.wait(300)
         for c in range(cores):
             store=False if c!=0 else True
-            p = mp.Process(target=mp_proc, args=(f"{aot_dir}/exe_split_{rank}.pte", recv_tensor, mp_collect_tensor, no_star, store, ))
+            p = mp.Process(target=mp_proc, args=(f"{aot_dir}/exe_split_{rank}.pte.exp", recv_tensor, mp_collect_tensor, no_star, store, ))
             # p = mp.Process(target=mp_proc, args=(method, recv_tensor, mp_collect_tensor, no_star, store, ))
             # p = mp.Process(target=mp_proc, args=(pickle.dumps(mod, recurse=True, byref=True), recv_tensor, mp_collect_tensor, no_star, store, ))
             p.start()
