@@ -29,32 +29,22 @@ class Args:
     warmup: int = 1
     backend: str = "gloo"
 
-def mp_proc(model, input_tensor, output_tensor, no_star, store):
-    # model = pickle.loads(model)
-    # st=time.perf_counter()
-    # model = export.load(model).module()
-    # et=time.perf_counter()
-    # print(et-st)
-    # st=time.perf_counter()
-    # model = export.load(model).module()
-    # # runtime = Runtime.get()
-    # # program = runtime.load_program(model)
-    # # method = program.load_method("forward")
-    # et=time.perf_counter()
-    # print(et-st)
-    print(f"here {store}")
-    with torch.no_grad():
-        output = model.forward(input_tensor) if no_star else model.forward(*input_tensor)
-    # output = method.execute([input_tensor]) if no_star else method.execute([*input_tensor])#model.forward(*input_tensor)
-    # print(len(output), type(output), type(output[0]))
-    # output = output[0]
-    #fit into output tensor shape
-    # et=time.perf_counter()
-    # print(et-st)
+def mp_proc(model, input_tensor, output_tensor, no_star, store, iters, w_iters, warmup):
+    w_tracks=[]
+    for _ in range(iters+w_iters):
+        w_start = time.perf_counter()
+        # print(f"check {iters}")
+        with torch.no_grad():
+            output = model.forward(input_tensor) if no_star else model.forward(*input_tensor)
+        w_end = time.perf_counter()
+        w_tracks.append(w_end-w_start)
+
     if store:
         if type(output)!=type(output_tensor):
             output = torch.cat([o.flatten() for o in output]).flatten()
         output_tensor.copy_(output)
+        warmup[0] = sum(w_tracks[:w_iters])
+
 
 def str_to_dtype(code):
     mapping = {
@@ -69,7 +59,7 @@ def str_to_dtype(code):
     return mapping[code]
 
 
-def custom_pipeline(aot_dir, batch_num, world, rank, cores, inputs=None):
+def custom_pipeline(aot_dir, batch_num, world, rank, cores, iters=1, w_iters=1, inputs=None):
     stage_dict = open(f"{aot_dir}/stages.dict")
     stage_dict = literal_eval(stage_dict.readlines()[0].strip())
     #expected communications
@@ -91,7 +81,7 @@ def custom_pipeline(aot_dir, batch_num, world, rank, cores, inputs=None):
             recv_op=dist.P2POp(dist.irecv, placeholder, rank-1)
             exp_recvs.append(recv_op)    
     
-    split_pt = f"{aot_dir}/split_{rank}.pt2"
+    # split_pt = f"{aot_dir}/split_{rank}.pt2"
     split_pt = f"{aot_dir}/exe_split_{rank}.pte.exp"
     mod = export.load(split_pt).module()
     # mod = torch._inductor.aoti_load_package("/Users/animeshnd/model_splitting/aot_splitter/resnet18_children_1_1/ind_split_0.pt2")
@@ -102,7 +92,7 @@ def custom_pipeline(aot_dir, batch_num, world, rank, cores, inputs=None):
     comms=[]
     net_times=[]
     comp_times=[]
-
+    warmup_times=[]
     #sync point to get timings right for everyone
     dist.barrier()
     total_start = time.perf_counter()
@@ -142,22 +132,12 @@ def custom_pipeline(aot_dir, batch_num, world, rank, cores, inputs=None):
                 counter+=slices[sl]
             recv_tensor = tuple([t.share_memory_() for t in split_t])
 
+        warm_up = torch.empty(1).share_memory_()
         comp_start = time.perf_counter()
         #parallelising here
-        # pool = mp.Pool(cores)
-        # store=True
-        # mp_res = pool.map_async(mp_proc, [(mod,recv_tensor, mp_collect_tensor, no_star, store ) for i in range(cores)])
-
-        # # while not mp_res.ready():
-        # #     time.sleep(1)
-        # res = mp_res.get()
-        # print(res)
-        # mp_res.wait(300)
         for c in range(cores):
             store=False if c!=0 else True
-            p = mp.Process(target=mp_proc, args=(mod, recv_tensor, mp_collect_tensor, no_star, store, ))
-            # p = mp.Process(target=mp_proc, args=(method, recv_tensor, mp_collect_tensor, no_star, store, ))
-            # p = mp.Process(target=mp_proc, args=(pickle.dumps(mod, recurse=True, byref=True), recv_tensor, mp_collect_tensor, no_star, store, ))
+            p = mp.Process(target=mp_proc, args=(mod, recv_tensor, mp_collect_tensor, no_star, store, iters, w_iters, warm_up ))
             p.start()
             processes.append(p)
 
@@ -165,6 +145,7 @@ def custom_pipeline(aot_dir, batch_num, world, rank, cores, inputs=None):
             p.join()
         comp_end = time.perf_counter()
         comp_times.append(comp_end-comp_start)
+        warmup_times.append(warm_up[0].item())
         #reset comms for next iteration
         comms=[]
         if rank+1 < world:
@@ -183,7 +164,9 @@ def custom_pipeline(aot_dir, batch_num, world, rank, cores, inputs=None):
     
     total_end = time.perf_counter()
     total_times.append(total_end-total_start)
-    return mp_collect_tensor
+    #NOTE warmuptimes need to be excluded from their current compute time AND from the next layer's network time for true time!
+    #NOTE same for total times since it includes both network and compute so two different warmup corrections!
+    return mp_collect_tensor, comp_times, warmup_times, net_times, total_times
 
 def data_loader(model_type, batch_num, batch_size, image_path):
     weights, transforms= None, None
@@ -207,9 +190,6 @@ def top1_label(model_type, output):
         from torchvision.models import ResNet18_Weights
         weights=ResNet18_Weights.DEFAULT
         categories = weights.meta["categories"]
-
-    #weights = ResNet18_Weights.DEFAULT
-    #categories = weights.meta["categories"]
     idx=0
     try:
         idx = int(output.argmax(dim=1).item())
@@ -221,7 +201,7 @@ if __name__ == "__main__":
     mp.set_start_method("fork")
     set_core_behavior(1)
     args = tyro.cli(Args)
-    print(f"Model {args.model_type} and split {args.model_split_type}")
+    print(f"Model {args.model_type} and split {args.model_split_type}", flush=True)
     
     init_method = f"tcp://{args.ip}:{args.port}"
     dist.init_process_group(backend=args.backend, init_method=init_method, 
@@ -229,10 +209,14 @@ if __name__ == "__main__":
     aot_dir = f"./{args.model_type}_{args.model_split_type}_{args.world}_{args.batch_size}"
     inputs = data_loader(args.model_type, args.batch_num, args.batch_size, args.image) if args.rank==0 else []
 
-    op = custom_pipeline(aot_dir, args.batch_num, args.world, args.rank, args.cores, inputs)
-    if args.rank+1==args.world:
-        s = top1_label(args.model_type, op)
-        print(s)
+    op, comp_times, warmup_times, net_times, total_times = custom_pipeline(aot_dir, args.batch_num, args.world, args.rank, args.cores, iters=args.iters, w_iters=args.warmup, inputs=inputs)
+    #NOTE difference parsing strat -> literal_eval my goat
+    log_dict = {"rank":args.rank, "world":args.world, "comp_times":comp_times, "warmup": warmup_times ,"net_times":net_times, "total_times":total_times}
+    print(log_dict, flush=True)
+    
+    # if args.rank+1==args.world:
+    #     s = top1_label(args.model_type, op)
+        # print(s)
 
 
 
