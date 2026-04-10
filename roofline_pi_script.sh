@@ -13,12 +13,12 @@ killer () {
 
 timeout () {
         echo "timeout started for ${log_path}/${world}_size/${batch_size}_${batch_num}/speed_chronos${t}.log"
-        sleep 300
+        sleep 600
         keyword=$(cat "${log_path}/${world}_size/${batch_size}_${batch_num}/speed_chronos${t}.log" | grep "Sync done -> model run start" | wc -l)
         if [[ $keyword -ge 1 ]]
         then
                 echo "checking second timeout"
-                sleep 180
+                sleep 600
                 if [[ $( cat ${log_path}/${world}_size/${batch_size}_${batch_num}/speed_chronos${t}.log | grep "Time taken by rank"  | wc -l ) -eq 0 ]]
                 then 
                         echo "died by second timeout"
@@ -55,14 +55,15 @@ iters=2
 for batch_num in 1 2 5 10
 do
         # for batch_size in 2 4 6 8 
-        for batch_size in 2 4
+        for batch_size in 1
         # for batch_size in 2
         do
                 pids=()
                 mkdir -p ${log_path}/${world}_size/${batch_size}_${batch_num}/ 
                 
                 # val=${good_ones[$i]}
-                python3 ${script_path}/main_infer_exec.py --cores 4 --rank $rank --world $world --ip $master --port 8123 --warmup 1 --images /home/animesh//model_splitting/bear.jpeg /home/animesh//model_splitting/penguin.jpeg --batch-size $batch_size --batch-num $batch_num --iters $iters --model-type $model_type --model-split-type $model_split >> ${log_path}/${world}_size/${batch_size}_${batch_num}/speed_chronos${t}.log &
+                # python3 ${script_path}/main_infer_exec.py --cores 4 --rank $rank --world $world --ip $master --port 8123 --warmup 1 --images /home/animesh//model_splitting/bear.jpeg /home/animesh//model_splitting/penguin.jpeg --batch-size $batch_size --batch-num $batch_num --iters $iters --model-type $model_type --model-split-type $model_split >> ${log_path}/${world}_size/${batch_size}_${batch_num}/speed_chronos${t}.log &
+                python3 ${script_path}/main_runnner.py --cores 4 --rank $rank --world $world --ip $master --port 8123 --warmup 1 --batch-size $batch_size --batch-num $batch_num --iters $iters --model-type $model_type --model-split-type $model_split >> ${log_path}/${world}_size/${batch_size}_${batch_num}/speed_chronos${t}.log &
                 pids+=($!)
                 #copy=1 inp_len=1 log_path="${log_path}/trial/" world_size=$world rank=$i master=$master cores=1 srun -N 1 --nodelist=$val ${script_path}/volt_tester_ml.sh 4 0  > /dev/null&
                 #wait
