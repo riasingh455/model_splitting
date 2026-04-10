@@ -59,6 +59,7 @@ def executorch_stuff(fname, exp, cal_sample, ex_inp):
     exported_program = torch.export.export(quantized_model, ex_inp, strict=True)
     re_exp = torch.export.export(exported_program.module(), ex_inp)
     torch.export.save(re_exp, f"{fname}.exp")#"resnet_exp_strict_rexp.model")
+    return re_exp.module()
     # torch.save(exported_program.module().state_dict(), "resnet_exp_strict.model")
 
     # edge = to_edge(exp, compile_config=EdgeCompileConfig(_check_ir_validity=False))
@@ -91,36 +92,36 @@ def stat_generator(pipe, world, model_type, model_split_type, example_input):
     # qparams = get_symmetric_quantization_config(is_per_channel=True) # (1)
     # quantizer = XNNPACKQuantizer()
     # quantizer.set_global(qparams)
-    weights = ResNet18_Weights.DEFAULT
-    model = resnet18(weights=weights).eval()
-    stem = nn.Sequential(model.conv1, model.bn1, model.relu, model.maxpool)
-    tail = nn.Sequential(model.avgpool, nn.Flatten(1), model.fc)
+    # weights = ResNet18_Weights.DEFAULT
+    # model = resnet18(weights=weights).eval()
+    # stem = nn.Sequential(model.conv1, model.bn1, model.relu, model.maxpool)
+    # tail = nn.Sequential(model.avgpool, nn.Flatten(1), model.fc)
 
 
 
-    forced_staged = {}
-    if world == 1:
-        forced_staged = {0:model}
-    if world == 2:
-        # Stage0: stem + layer1 + layer2
-        # Stage1: layer3 + layer4 + tail
-        s0 = nn.Sequential(stem, model.layer1, model.layer2)
-        s1 = nn.Sequential(model.layer3, model.layer4, tail)
-        forced_staged = {0:s0, 1:s1}
+    # forced_staged = {}
+    # if world == 1:
+    #     forced_staged = {0:model}
+    # if world == 2:
+    #     # Stage0: stem + layer1 + layer2
+    #     # Stage1: layer3 + layer4 + tail
+    #     s0 = nn.Sequential(stem, model.layer1, model.layer2)
+    #     s1 = nn.Sequential(model.layer3, model.layer4, tail)
+    #     forced_staged = {0:s0, 1:s1}
 
-    if world == 3:
-        # Stage0: stem + layer1
-        # Stage1: layer2 + layer3
-        # Stage2: layer4 + tail
-        s0 = nn.Sequential(stem, model.layer1)
-        s1 = nn.Sequential(model.layer2, model.layer3)
-        s2 = nn.Sequential(model.layer4, tail)
-        forced_staged = {0:s0, 1:s1, 2:s2}
+    # if world == 3:
+    #     # Stage0: stem + layer1
+    #     # Stage1: layer2 + layer3
+    #     # Stage2: layer4 + tail
+    #     s0 = nn.Sequential(stem, model.layer1)
+    #     s1 = nn.Sequential(model.layer2, model.layer3)
+    #     s2 = nn.Sequential(model.layer4, tail)
+    #     forced_staged = {0:s0, 1:s1, 2:s2}
     
     #manually checking here:
     # output = forced_staged[0](example_input)
     # executorch_stuff("", forced_staged[0])
-    print("passed first executorch?")
+    # print("passed first executorch?") 
     # qparams = get_symmetric_quantization_config(is_per_channel=True)
     # quantizer = XNNPACKQuantizer()
     # quantizer.set_global(qparams)
@@ -154,19 +155,12 @@ def stat_generator(pipe, world, model_type, model_split_type, example_input):
         #     else:
         #         temp = torch.export.export(temp, (output,)).module()
 
-        if rank not in stage_shapes:
-            if type(output)!=type(example_input):
-                stage_info = [len(output), [list(o.shape) for o in output]]
-                new_output = torch.cat([o.flatten() for o in output]).flatten()
-                stage_info = [tuple(new_output.shape), f"{new_output.dtype}"] + stage_info
-                stage_shapes[rank] = [i for i in stage_info]
-            else:
-                stage_shapes[rank] = [tuple(output.shape), f"{output.dtype}"]
+        
         # flop_counter = FlopCounterMode(display=False, depth=None)
         # with flop_counter:
         if rank==0:
             # print(example_input.shape)
-            output = temp(example_input)
+            # n_output = temp(example_input)
 #             from torchao.quantization.quant_api import int4_weight_only
 
 # m = nn.Sequential(nn.Linear(32, 1024), nn.Linear(1024, 32))
@@ -176,7 +170,8 @@ def stat_generator(pipe, world, model_type, model_split_type, example_input):
             # print(temp)
             # with torch.no_grad():
             exp =  torch.export.export(temp, (example_input,))
-            executorch_stuff(f"{app_dir}/exe_split_{rank}.pte", exp.module(), example_input, (example_input,))
+            temp = executorch_stuff(f"{app_dir}/exe_split_{rank}.pte", exp.module(), example_input, (example_input,))
+            n_output = temp.forward(example_input)
             # exp=exp.run_decompositions(decomp_table=torch.export.default_decompositions())
             # exp = exp.module()
             # pre_model = prepare_pt2e(exp, quantizer=)#, quantizer)
@@ -194,22 +189,44 @@ def stat_generator(pipe, world, model_type, model_split_type, example_input):
             # # con_model.compile()
             # exp = torch.export.export(con_model, (example_input,))
             # quantize_(, Int8DynamicActivationInt8WeightConfig())
-            torch.export.save(exp, f"{app_dir}/split_{rank}.pt2")
+            # torch.export.save(exp, f"{app_dir}/split_{rank}.pt2")
             # torch.save(exp, f"{app_dir}/split_{rank}.pt2")
             # torch.save(exp.module().state_dict(), f"{app_dir}/split_{rank}_state.pt2")
         else:
             if type(output)!=type(example_input):
                 exp = torch.export.export(temp, output)
                 #TODO make first output actually *output!
-                executorch_stuff(f"{app_dir}/exe_split_{rank}.pte", exp.module(), output, output)
-                torch.export.save(exp, f"{app_dir}/split_{rank}.pt2")
-                output = temp.forward(*output)
+                temp = executorch_stuff(f"{app_dir}/exe_split_{rank}.pte", exp.module(), output, output)
+                # torch.export.save(exp, f"{app_dir}/split_{rank}.pt2")
+                n_output = temp.forward(*output)
                 
             else:
                 exp = torch.export.export(temp, (output,))
-                executorch_stuff(f"{app_dir}/exe_split_{rank}.pte", exp.module(), output, (output,))
-                torch.export.save(exp, f"{app_dir}/split_{rank}.pt2")
-                output = temp.forward(output)
+                temp = executorch_stuff(f"{app_dir}/exe_split_{rank}.pte", exp.module(), output, (output,))
+                # torch.export.save(exp, f"{app_dir}/split_{rank}.pt2")
+                n_output = temp.forward(output)
+        
+        if rank not in stage_shapes:
+            if type(output)!=type(example_input):
+                stage_info = [len(output), [list(o.shape) for o in output]]
+                new_output = torch.cat([o.flatten() for o in output]).flatten()
+                stage_info = [tuple(new_output.shape), f"{new_output.dtype}"] + stage_info
+                stage_shapes[rank] = [i for i in stage_info]
+            else:
+                stage_shapes[rank] = [tuple(output.shape), f"{output.dtype}"]
+        
+        #flop counter here instead
+        if rank not in flop_stages:
+            flop_counter = FlopCounterMode(display=False, depth=None)
+            with flop_counter:
+                if type(output) != type(example_input):
+                    temp.forward(*output)
+                else:
+                    temp.forward(output)
+                flop_stages[rank] = flop_counter.get_total_flops()
+        
+        output = n_output
+
         # if rank not in flop_stages:
             # flop_stages[rank] = flop_counter.get_total_flops()
     #additional rank for final output
