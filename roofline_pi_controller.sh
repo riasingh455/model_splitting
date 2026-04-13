@@ -23,7 +23,7 @@ node_select () {
 model_type=$1
 model_split=$2
 node_prefix=$3
-path_prefix="/home/animesh/model_splitting/"
+path_prefix="/home/animesh/test_model_split/"
 
 if [[ -z $model_type ]] || [[ -z $model_split ]] || [[ -z $node_prefix ]]
 then
