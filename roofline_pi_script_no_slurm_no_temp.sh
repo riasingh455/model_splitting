@@ -65,13 +65,18 @@ log_path="/home/animesh/test_model_split/logs/roofline/${node_prefix}/${model_ty
 
 #killer
 
-iters=30
+iters=10
+if [[ $bnum -gt 1 ]]
+then
+        iters=1
+fi
+
 pushd ${script_path}
 
-for batch_num in 1
+for (( batch_num=1; batch_num<=$bnum; batch_num++ ))
 do
         # for batch_size in 2 4 6 8 
-        killer 
+        killer
 
 	for batch_size in 1
         # for batch_size in 2

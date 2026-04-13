@@ -1,5 +1,5 @@
 import tyro
-from PIL import Image
+# from PIL import Image
 from dataclasses import dataclass
 from ast import literal_eval 
 import time
@@ -10,7 +10,8 @@ import torch
 import torch.export as export
 import torch.distributed as dist
 import torch.multiprocessing as mp
-from executorch.runtime import Runtime
+from torch.ao.quantization.fx._decomposed import quantized_decomposed_lib
+# from executorch.runtime import Runtime
 # import pathos.multiprocessing as mp
 
 @dataclass
@@ -29,21 +30,24 @@ class Args:
     warmup: int = 1
     backend: str = "gloo"
 
-def mp_proc(model, input_tensor, output_tensor, no_star, store, iters, w_iters, warmup):
-    w_tracks=[]
-    for _ in range(iters+w_iters):
+# def mp_proc(model, input_tensor, output_tensor, no_star, store, iters, w_iters, warmup):
+def mp_proc(model, input_tensor, no_star, iters, w_iters, warmup, r):
+    for i in range(iters+w_iters):
         w_start = time.perf_counter()
         # print(f"check {iters}")
-        with torch.no_grad():
-            output = model.forward(input_tensor) if no_star else model.forward(*input_tensor)
+        with torch.inference_mode():
+            # output = model.forward(input_tensor) if no_star else model.forward(*input_tensor)
+            model.forward(input_tensor) if no_star else model.forward(*input_tensor)
         w_end = time.perf_counter()
-        w_tracks.append(w_end-w_start)
+        # if i < w_iters:
+            # w_tracks.append(w_end-w_start)
+        warmup[r][i] = int(round((w_end-w_start)*10**3))
 
-    if store:
-        if type(output)!=type(output_tensor):
-            output = torch.cat([o.flatten() for o in output]).flatten()
-        output_tensor.copy_(output)
-        warmup[0] = sum(w_tracks[:w_iters])
+    # if store:
+    #     if type(output)!=type(output_tensor):
+    #         output = torch.cat([o.flatten() for o in output]).flatten()
+    #     output_tensor.copy_(output)
+    
 
 
 def str_to_dtype(code):
@@ -66,9 +70,10 @@ def custom_pipeline(aot_dir, batch_num, world, rank, cores, iters=1, w_iters=1, 
     exp_recvs = []
     exp_recvs_tensors = [] if rank!=0 else inputs
     #tensor used to collect send request
-    mp_collect_tensor = torch.zeros(stage_dict[rank+1][0], dtype=str_to_dtype(stage_dict[rank+1][1])) #if rank+1 < world else []
-    if len(mp_collect_tensor) > 0:
-        mp_collect_tensor.share_memory_() 
+    # mp_collect_tensor = torch.zeros(stage_dict[rank+1][0], dtype=str_to_dtype(stage_dict[rank+1][1])) #if rank+1 < world else []
+    mp_collect_tensor = torch.rand(stage_dict[rank+1][0], dtype=str_to_dtype(stage_dict[rank+1][1])) #if rank+1 < world else []
+    # if len(mp_collect_tensor) > 0:
+    #     mp_collect_tensor.share_memory_() 
     no_star=True
     star_track = []
     if rank!=0:
@@ -83,6 +88,7 @@ def custom_pipeline(aot_dir, batch_num, world, rank, cores, iters=1, w_iters=1, 
     
     # split_pt = f"{aot_dir}/split_{rank}.pt2"
     split_pt = f"{aot_dir}/exe_split_{rank}.pte.exp"
+
     mod = export.load(split_pt).module()
     # mod = torch._inductor.aoti_load_package("/Users/animeshnd/model_splitting/aot_splitter/resnet18_children_1_1/ind_split_0.pt2")
     
@@ -132,12 +138,12 @@ def custom_pipeline(aot_dir, batch_num, world, rank, cores, iters=1, w_iters=1, 
                 counter+=slices[sl]
             recv_tensor = tuple([t.share_memory_() for t in split_t])
 
-        warm_up = torch.empty(1).share_memory_()
+        warm_up = torch.empty((4, iters+w_iters), dtype=torch.int16).share_memory_()
         comp_start = time.perf_counter()
         #parallelising here
         for c in range(cores):
-            store=False if c!=0 else True
-            p = mp.Process(target=mp_proc, args=(mod, recv_tensor, mp_collect_tensor, no_star, store, iters, w_iters, warm_up ))
+            # store=False if c!=0 else True
+            p = mp.Process(target=mp_proc, args=(mod, recv_tensor, no_star, iters, w_iters, warm_up, c, ))
             p.start()
             processes.append(p)
 
@@ -145,7 +151,8 @@ def custom_pipeline(aot_dir, batch_num, world, rank, cores, iters=1, w_iters=1, 
             p.join()
         comp_end = time.perf_counter()
         comp_times.append(comp_end-comp_start)
-        warmup_times.append(warm_up[0].item())
+        warmup_times.append([ [i.item() for i in t] for t in warm_up])
+        del warm_up
         #reset comms for next iteration
         comms=[]
         if rank+1 < world:
@@ -153,6 +160,7 @@ def custom_pipeline(aot_dir, batch_num, world, rank, cores, iters=1, w_iters=1, 
             send_op = dist.P2POp(dist.isend, mp_collect_tensor, rank+1)
             comms.append(send_op)
     
+    del mod
     #if leftover sends
     if len(comms)>0:
         net_start=time.perf_counter()
@@ -169,14 +177,15 @@ def custom_pipeline(aot_dir, batch_num, world, rank, cores, iters=1, w_iters=1, 
     return mp_collect_tensor, comp_times, warmup_times, net_times, total_times
 
 def data_loader(model_type, batch_num, batch_size, image_path):
-    weights, transforms= None, None
+    # weights, transforms= None, None
 
-    if model_type=="resnet18":
-        from torchvision.models import ResNet18_Weights
-        weights=ResNet18_Weights.DEFAULT
-        transforms=weights.transforms()
+    # if model_type=="resnet18":
+    #     from torchvision.models import ResNet18_Weights
+    #     weights=ResNet18_Weights.DEFAULT
+    #     transforms=weights.transforms()
     
-    img_batch=[transforms(Image.open(image_path).convert("RGB"))]*batch_size
+    # img_batch=[transforms(Image.open(image_path).convert("RGB"))]*batch_size
+    img_batch=[torch.rand((3,224,224))]*batch_size
     batches = [torch.stack(img_batch)]*batch_num
     return batches
 
