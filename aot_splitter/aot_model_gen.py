@@ -2,7 +2,7 @@ import tyro
 from dataclasses import dataclass
 import torch
 import torch.nn as nn
-
+import dill
 # from torchvision.models.quantization import ResNet18_QuantizedWeights
 # from torchvision.models.quantization import resnet18
 from torchvision.models import resnet18, ResNet18_Weights, mobilenet_v3_small, MobileNet_V3_Small_Weights# mobilenet_v3_large, MobileNet_V3_Large_Weights
@@ -169,8 +169,16 @@ def stat_generator(pipe, world, model_type, model_split_type, example_input):
             # quantize_(temp, Int4WeightOnlyConfig(group_size=32, version=1) )
             # print(temp)
             # with torch.no_grad():
-            exp =  torch.export.export(temp, (example_input,))
-            temp = executorch_stuff(f"{app_dir}/exe_split_{rank}.pte", exp.module(), example_input, (example_input,))
+            exp =  torch.export.export(temp, (example_input,), strict=True)
+            print(exp.module()._graph._codegen.pytree_info.in_spec)
+            print(exp.module()._graph._codegen.pytree_info.out_spec)
+                #TODO got to replace the infpec and outpsec approrpaietyl
+
+            # exp.
+            exp.module(check_guards=False).to_folder(f"{app_dir}/test_folder_{rank}", f"test_{rank}")
+            # torch.save(exp.module(check_guards=False), f"{app_dir}/{rank}.model", pickle_module=dill)
+            executorch_stuff(f"{app_dir}/exe_split_{rank}.pte", exp.module(), example_input, (example_input,))
+            # torch.save(temp, f"{app_dir}/{rank}.quant_model")
             n_output = temp.forward(example_input)
             # exp=exp.run_decompositions(decomp_table=torch.export.default_decompositions())
             # exp = exp.module()
@@ -194,15 +202,25 @@ def stat_generator(pipe, world, model_type, model_split_type, example_input):
             # torch.save(exp.module().state_dict(), f"{app_dir}/split_{rank}_state.pt2")
         else:
             if type(output)!=type(example_input):
-                exp = torch.export.export(temp, output)
+                exp = torch.export.export(temp, output, strict=True)
+                exp.module(check_guards=False).to_folder(f"{app_dir}/test_folder_{rank}", f"test_{rank}")
+                
+                # torch.save(exp.module(check_guards=False), f"{app_dir}/{rank}.model", pickle_module=dill)
                 #TODO make first output actually *output!
-                temp = executorch_stuff(f"{app_dir}/exe_split_{rank}.pte", exp.module(), output, output)
+                executorch_stuff(f"{app_dir}/exe_split_{rank}.pte", exp.module(), output, output)
+                # torch.save(temp, f"{app_dir}/{rank}.quant_model")
                 # torch.export.save(exp, f"{app_dir}/split_{rank}.pt2")
                 n_output = temp.forward(*output)
                 
             else:
-                exp = torch.export.export(temp, (output,))
-                temp = executorch_stuff(f"{app_dir}/exe_split_{rank}.pte", exp.module(), output, (output,))
+                exp = torch.export.export(temp, (output,), strict=True)
+                print(exp.module()._graph._codegen.pytree_info.in_spec)
+                print(exp.module()._graph._codegen.pytree_info.out_spec)
+                #TODO got to replace the infpec and outpsec approrpaietyl
+                exp.module(check_guards=False).to_folder(f"{app_dir}/test_folder_{rank}", f"test_{rank}")
+                # torch.save(exp.module(check_guards=False), f"{app_dir}/{rank}.model", pickle_module=dill)
+                executorch_stuff(f"{app_dir}/exe_split_{rank}.pte", exp.module(), output, (output,))
+                # torch.save(temp, f"{app_dir}/{rank}.quant_model")
                 # torch.export.save(exp, f"{app_dir}/split_{rank}.pt2")
                 n_output = temp.forward(output)
         
@@ -216,14 +234,14 @@ def stat_generator(pipe, world, model_type, model_split_type, example_input):
                 stage_shapes[rank] = [tuple(output.shape), f"{output.dtype}"]
         
         #flop counter here instead
-        if rank not in flop_stages:
-            flop_counter = FlopCounterMode(display=False, depth=None)
-            with flop_counter:
-                if type(output) != type(example_input):
-                    temp.forward(*output)
-                else:
-                    temp.forward(output)
-                flop_stages[rank] = flop_counter.get_total_flops()
+        # if rank not in flop_stages:
+        #     flop_counter = FlopCounterMode(display=False, depth=None)
+        #     with flop_counter:
+        #         if type(output) != type(example_input):
+        #             temp.forward(*output)
+        #         else:
+        #             temp.forward(output)
+        #         flop_stages[rank] = flop_counter.get_total_flops()
         
         output = n_output
 
@@ -238,9 +256,9 @@ def stat_generator(pipe, world, model_type, model_split_type, example_input):
             stage_shapes[world] = [i for i in stage_info]
         else:
             stage_shapes[world] = [tuple(output.shape), f"{output.dtype}"]
-    flop_file=f"{app_dir}/flop.dict"
-    f=open(flop_file, "w")
-    f.write(f"{flop_stages}\n")
+    # flop_file=f"{app_dir}/flop.dict"
+    # f=open(flop_file, "w")
+    # f.write(f"{flop_stages}\n")
     stage_file=f"{app_dir}/stages.dict"
     f=open(stage_file, "w")
     f.write(f"{stage_shapes}\n")

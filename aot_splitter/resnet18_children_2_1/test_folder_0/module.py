@@ -1,0 +1,70 @@
+
+import torch
+from math import inf
+from math import nan
+NoneType = type(None)
+import torch
+from torch import device
+import torch.fx._pytree as fx_pytree
+import torch.utils._pytree as pytree
+
+from torch.nn import *
+class test_0(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        setattr(self, 'conv1', torch.load(r'resnet18_children_2_1/test_folder_0/conv1.pt', weights_only=False)) # Module()
+        setattr(self, 'bn1', torch.load(r'resnet18_children_2_1/test_folder_0/bn1.pt', weights_only=False)) # Module()
+        setattr(self, 'layer1', torch.load(r'resnet18_children_2_1/test_folder_0/layer1.pt', weights_only=False)) # Module(   (0): Module(     (conv1): Module()     (bn1): Module()     (conv2): Module()     (bn2): Module()   )   (1): Module(     (conv1): Module()     (bn1): Module()     (conv2): Module()     (bn2): Module()   ) )
+        self.load_state_dict(torch.load(r'resnet18_children_2_1/test_folder_0/state_dict.pt'))
+
+
+
+    def forward(self, x):
+        x, = fx_pytree.tree_flatten_spec(([x], {}), 
+        pytree.TreeSpec(tuple, None, [pytree.TreeSpec(tuple, None, [pytree.LeafSpec()]), pytree.TreeSpec(dict, [], [])])
+        )
+        conv1_weight = self.conv1.weight
+        bn1_weight = self.bn1.weight
+        bn1_bias = self.bn1.bias
+        layer1_0_conv1_weight = getattr(self.layer1, "0").conv1.weight
+        layer1_0_bn1_weight = getattr(self.layer1, "0").bn1.weight
+        layer1_0_bn1_bias = getattr(self.layer1, "0").bn1.bias
+        layer1_0_conv2_weight = getattr(self.layer1, "0").conv2.weight
+        layer1_0_bn2_weight = getattr(self.layer1, "0").bn2.weight
+        layer1_0_bn2_bias = getattr(self.layer1, "0").bn2.bias
+        layer1_1_conv1_weight = getattr(self.layer1, "1").conv1.weight
+        layer1_1_bn1_weight = getattr(self.layer1, "1").bn1.weight
+        layer1_1_bn1_bias = getattr(self.layer1, "1").bn1.bias
+        layer1_1_conv2_weight = getattr(self.layer1, "1").conv2.weight
+        layer1_1_bn2_weight = getattr(self.layer1, "1").bn2.weight
+        layer1_1_bn2_bias = getattr(self.layer1, "1").bn2.bias
+        bn1_running_mean = self.bn1.running_mean
+        bn1_running_var = self.bn1.running_var
+        layer1_0_bn1_running_mean = getattr(self.layer1, "0").bn1.running_mean
+        layer1_0_bn1_running_var = getattr(self.layer1, "0").bn1.running_var
+        layer1_0_bn2_running_mean = getattr(self.layer1, "0").bn2.running_mean
+        layer1_0_bn2_running_var = getattr(self.layer1, "0").bn2.running_var
+        layer1_1_bn1_running_mean = getattr(self.layer1, "1").bn1.running_mean
+        layer1_1_bn1_running_var = getattr(self.layer1, "1").bn1.running_var
+        layer1_1_bn2_running_mean = getattr(self.layer1, "1").bn2.running_mean
+        layer1_1_bn2_running_var = getattr(self.layer1, "1").bn2.running_var
+        conv2d = torch.ops.aten.conv2d.default(x, conv1_weight, None, [2, 2], [3, 3]);  x = conv1_weight = None
+        batch_norm = torch.ops.aten.batch_norm.default(conv2d, bn1_weight, bn1_bias, bn1_running_mean, bn1_running_var, False, 0.1, 1e-05, False);  conv2d = bn1_weight = bn1_bias = bn1_running_mean = bn1_running_var = None
+        relu_ = torch.ops.aten.relu_.default(batch_norm);  batch_norm = None
+        max_pool2d = torch.ops.aten.max_pool2d.default(relu_, [3, 3], [2, 2], [1, 1]);  relu_ = None
+        conv2d_1 = torch.ops.aten.conv2d.default(max_pool2d, layer1_0_conv1_weight, None, [1, 1], [1, 1]);  layer1_0_conv1_weight = None
+        batch_norm_1 = torch.ops.aten.batch_norm.default(conv2d_1, layer1_0_bn1_weight, layer1_0_bn1_bias, layer1_0_bn1_running_mean, layer1_0_bn1_running_var, False, 0.1, 1e-05, False);  conv2d_1 = layer1_0_bn1_weight = layer1_0_bn1_bias = layer1_0_bn1_running_mean = layer1_0_bn1_running_var = None
+        relu__1 = torch.ops.aten.relu_.default(batch_norm_1);  batch_norm_1 = None
+        conv2d_2 = torch.ops.aten.conv2d.default(relu__1, layer1_0_conv2_weight, None, [1, 1], [1, 1]);  relu__1 = layer1_0_conv2_weight = None
+        batch_norm_2 = torch.ops.aten.batch_norm.default(conv2d_2, layer1_0_bn2_weight, layer1_0_bn2_bias, layer1_0_bn2_running_mean, layer1_0_bn2_running_var, False, 0.1, 1e-05, False);  conv2d_2 = layer1_0_bn2_weight = layer1_0_bn2_bias = layer1_0_bn2_running_mean = layer1_0_bn2_running_var = None
+        add_ = torch.ops.aten.add_.Tensor(batch_norm_2, max_pool2d);  batch_norm_2 = max_pool2d = None
+        relu__2 = torch.ops.aten.relu_.default(add_);  add_ = None
+        conv2d_3 = torch.ops.aten.conv2d.default(relu__2, layer1_1_conv1_weight, None, [1, 1], [1, 1]);  layer1_1_conv1_weight = None
+        batch_norm_3 = torch.ops.aten.batch_norm.default(conv2d_3, layer1_1_bn1_weight, layer1_1_bn1_bias, layer1_1_bn1_running_mean, layer1_1_bn1_running_var, False, 0.1, 1e-05, False);  conv2d_3 = layer1_1_bn1_weight = layer1_1_bn1_bias = layer1_1_bn1_running_mean = layer1_1_bn1_running_var = None
+        relu__3 = torch.ops.aten.relu_.default(batch_norm_3);  batch_norm_3 = None
+        conv2d_4 = torch.ops.aten.conv2d.default(relu__3, layer1_1_conv2_weight, None, [1, 1], [1, 1]);  relu__3 = layer1_1_conv2_weight = None
+        batch_norm_4 = torch.ops.aten.batch_norm.default(conv2d_4, layer1_1_bn2_weight, layer1_1_bn2_bias, layer1_1_bn2_running_mean, layer1_1_bn2_running_var, False, 0.1, 1e-05, False);  conv2d_4 = layer1_1_bn2_weight = layer1_1_bn2_bias = layer1_1_bn2_running_mean = layer1_1_bn2_running_var = None
+        add__1 = torch.ops.aten.add_.Tensor(batch_norm_4, relu__2);  batch_norm_4 = relu__2 = None
+        relu__4 = torch.ops.aten.relu_.default(add__1);  add__1 = None
+        return pytree.tree_unflatten((relu__4,), pytree.LeafSpec())
+

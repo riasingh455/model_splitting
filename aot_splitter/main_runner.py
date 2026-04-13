@@ -1,9 +1,40 @@
+# import linecache
+# import os
+# import tracemalloc
+
+# def display_top(snapshot, key_type='lineno', limit=10):
+#     snapshot = snapshot.filter_traces((
+#         tracemalloc.Filter(False, "<frozen importlib._bootstrap>"),
+#         # tracemalloc.Filter(False, "frozen"),
+#         tracemalloc.Filter(False, "<unknown>"),
+#     ))
+#     top_stats = snapshot.statistics(key_type)
+
+#     print("Top %s lines" % limit)
+#     for index, stat in enumerate(top_stats[:limit], 1):
+#         frame = stat.traceback[0]
+#         print("#%s: %s:%s: %.1f KiB"
+#               % (index, frame.filename, frame.lineno, stat.size / 1024))
+#         line = linecache.getline(frame.filename, frame.lineno).strip()
+#         if line:
+#             print('    %s' % line)
+
+#     other = top_stats[limit:]
+#     if other:
+#         size = sum(stat.size for stat in other)
+#         print("%s other: %.1f KiB" % (len(other), size / 1024))
+#     total = sum(stat.size for stat in top_stats)
+#     print("Total allocated size: %.1f KiB" % (total / 1024))
+
+# tracemalloc.start()
+
 import tyro
 from PIL import Image
 from dataclasses import dataclass
 from ast import literal_eval 
 import time
 from datetime import datetime
+# import gc
 # import dill as pickle 
 
 import torch
@@ -31,11 +62,15 @@ class Args:
 
 def mp_proc(model, input_tensor, output_tensor, no_star, store, iters, w_iters, warmup):
     w_tracks=[]
-    for _ in range(iters+w_iters):
+    for i in range(iters+w_iters):
         w_start = time.perf_counter()
         # print(f"check {iters}")
-        with torch.no_grad():
-            output = model.forward(input_tensor) if no_star else model.forward(*input_tensor)
+        with torch.inference_mode():
+        # with torch.no_grad():
+            if store:
+                output = model.forward(input_tensor) if no_star else model.forward(*input_tensor)
+            else:
+                model.forward(input_tensor) if no_star else model.forward(*input_tensor)
         w_end = time.perf_counter()
         w_tracks.append(w_end-w_start)
 
@@ -44,7 +79,7 @@ def mp_proc(model, input_tensor, output_tensor, no_star, store, iters, w_iters, 
             output = torch.cat([o.flatten() for o in output]).flatten()
         output_tensor.copy_(output)
         warmup[0] = sum(w_tracks[:w_iters])
-
+    output=None
 
 def str_to_dtype(code):
     mapping = {
@@ -94,6 +129,7 @@ def custom_pipeline(aot_dir, batch_num, world, rank, cores, iters=1, w_iters=1, 
     comp_times=[]
     warmup_times=[]
     #sync point to get timings right for everyone
+    # gc.collect()
     dist.barrier()
     total_start = time.perf_counter()
     ts = datetime.now()
@@ -101,6 +137,7 @@ def custom_pipeline(aot_dir, batch_num, world, rank, cores, iters=1, w_iters=1, 
 
     #can actually just use the communication from the stage dict!
     
+    # while len(exp_recvs_tensors) > 0:
     while len(exp_recvs_tensors) > 0:
         if len(exp_recvs)>0:
             #assumes no broadcast/multi-recvs for now
@@ -152,7 +189,6 @@ def custom_pipeline(aot_dir, batch_num, world, rank, cores, iters=1, w_iters=1, 
             mp_collect_tensor = mp_collect_tensor.contiguous()
             send_op = dist.P2POp(dist.isend, mp_collect_tensor, rank+1)
             comms.append(send_op)
-    
     #if leftover sends
     if len(comms)>0:
         net_start=time.perf_counter()
@@ -161,7 +197,8 @@ def custom_pipeline(aot_dir, batch_num, world, rank, cores, iters=1, w_iters=1, 
             w.wait()
         net_end=time.perf_counter()
         net_times.append(net_end-net_start)
-    
+    mod=None
+    # gc.collect()
     total_end = time.perf_counter()
     total_times.append(total_end-total_start)
     #NOTE warmuptimes need to be excluded from their current compute time AND from the next layer's network time for true time!
@@ -210,14 +247,16 @@ if __name__ == "__main__":
     inputs = data_loader(args.model_type, args.batch_num, args.batch_size, args.image) if args.rank==0 else []
 
     op, comp_times, warmup_times, net_times, total_times = custom_pipeline(aot_dir, args.batch_num, args.world, args.rank, args.cores, iters=args.iters, w_iters=args.warmup, inputs=inputs)
+
     #NOTE difference parsing strat -> literal_eval my goat
     log_dict = {"rank":args.rank, "world":args.world, "comp_times":comp_times, "warmup": warmup_times ,"net_times":net_times, "total_times":total_times}
     print(log_dict, flush=True)
-    
     # if args.rank+1==args.world:
     #     s = top1_label(args.model_type, op)
         # print(s)
-
+    # snapshot = tracemalloc.take_snapshot()
+    # print()
+    # display_top(snapshot, limit=20)
 
 
 
