@@ -39,16 +39,17 @@ model_type=$1
 model_split=$2
 node_prefix=$3
 conc=$4
+max_world=$5
 path_prefix="/home/animesh/test_model_split/"
 
-if [[ -z $model_type ]] || [[ -z $model_split ]] || [[ -z $node_prefix ]]
+if [[ -z $model_type ]] || [[ -z $model_split ]] || [[ -z $node_prefix ]] || [[ -z $conc ]] || [[ -z $max_world ]]
 then
-	echo "Missing arguments, expected: ./script.sh <model_type> (resnet18, mbv3_small, eb0) <model_split> (children, modules) <node_prefix> (bramble-x-y)" && exit
+	echo "Missing arguments, expected: ./script.sh <model_type> (resnet18, mbv3_small, eb0) <model_split> (children, modules) <node_prefix> (bramble-x-y) <conc_val> (int) <max_world> (int)" && exit
 fi
 
 for repeat in {1..10}
 do
-	for world in {2..10}
+	for(( world=1; world<=$max_world; world++ ))
 	do
 		conc_val=$(( $conc*$world ))
     		nodes=( $(node_select) )
