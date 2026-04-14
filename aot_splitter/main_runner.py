@@ -138,7 +138,7 @@ def custom_pipeline(aot_dir, batch_num, world, rank, cores, iters=1, w_iters=1, 
                 counter+=slices[sl]
             recv_tensor = tuple([t.share_memory_() for t in split_t])
 
-        warm_up = torch.empty((4, iters+w_iters), dtype=torch.int16).share_memory_()
+        warm_up = torch.empty((4, iters+w_iters), dtype=torch.int32).share_memory_()
         comp_start = time.perf_counter()
         #parallelising here
         for c in range(cores):

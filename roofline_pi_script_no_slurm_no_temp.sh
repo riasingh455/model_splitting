@@ -92,6 +92,7 @@ do
                 #wait
 
                 timeout &
+		timeout_pid=$!
 
                 while true; 
                 do      
@@ -116,6 +117,7 @@ do
                 then
                         #kill -9 $last_pid
                         kill -9 "${pids[@]}"
+			kill -9 $timeout_pid
                         exit
                 fi
                 #kill -9 $last_pid
@@ -124,4 +126,5 @@ do
 done
 
 popd
+kill -9 $timeout_pid
 
