@@ -1,12 +1,15 @@
+from __future__ import annotations 
+
 import tyro
 from dataclasses import dataclass
 import torch
 import torch.nn as nn
-
+# from typing import List
 # from torchvision.models.quantization import ResNet18_QuantizedWeights
 # from torchvision.models.quantization import resnet18
 from torchvision.models import resnet18, ResNet18_Weights, mobilenet_v3_small, MobileNet_V3_Small_Weights# mobilenet_v3_large, MobileNet_V3_Large_Weights
 from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights # mobilenet_v3_large, MobileNet_V3_Large_Weights
+from torchvision.models import vit_b_16, ViT_B_16_Weights #vit_l_32, ViT_L_32_Weights
 from torch.distributed.pipelining import pipeline, SplitPoint
 from torch.utils.flop_counter import FlopCounterMode
 from executorch.backends.xnnpack.partition.xnnpack_partitioner import XnnpackPartitioner
@@ -33,8 +36,9 @@ class Args:
     model_type: str = "resnet18"
     model_split_type:str = "children"
     image: str = "./bear.jpeg"
+    custom: list[int] = None
 
-def executorch_stuff(fname, exp, cal_sample, ex_inp):
+def executorch_stuff(fname, exp, cal_sample, ex_inp, star=False):
 
     #actually quantization lmao
     
@@ -53,8 +57,11 @@ def executorch_stuff(fname, exp, cal_sample, ex_inp):
     prepared_model = prepare_pt2e(exp, quantizer) # (3)
 
     # for cal_sample in [torch.randn(1, 3, 224, 224)]: # Replace with representative model inputs
-    prepared_model(cal_sample) # (4) Calibrate
-
+    if star==True:
+        prepared_model(*cal_sample)
+    else:
+        prepared_model(cal_sample) # (4) Calibrate
+    
     quantized_model = convert_pt2e(prepared_model) # (5)
     exported_program = torch.export.export(quantized_model, ex_inp, strict=True)
     re_exp = torch.export.export(exported_program.module(), ex_inp)
@@ -196,7 +203,7 @@ def stat_generator(pipe, world, model_type, model_split_type, example_input):
             if type(output)!=type(example_input):
                 exp = torch.export.export(temp, output)
                 #TODO make first output actually *output!
-                temp = executorch_stuff(f"{app_dir}/exe_split_{rank}.pte", exp.module(), output, output)
+                temp = executorch_stuff(f"{app_dir}/exe_split_{rank}.pte", exp.module(), output, output, star=True)
                 # torch.export.save(exp, f"{app_dir}/split_{rank}.pt2")
                 n_output = temp.forward(*output)
                 
@@ -255,7 +262,48 @@ def model_splitter(model, model_type, split_type, world, batch_size, specific_ch
     if world > len(split_model):
             world = len(split_model)
     
-    sizes = [len(split_model) // world + (1 if i < len(split_model) % world else 0) for i in range(world)] if len(specific_chunks)==0 else specific_chunks
+    sizes=[]
+    if len(specific_chunks)==0:
+        sizes = [len(split_model) // world + (1 if i < len(split_model) % world else 0) for i in range(world)] 
+    else:
+        if world!=len(specific_chunks):
+            world=len(specific_chunks)
+        raw_sizes = {k: int(round(specific_chunks[k]/100*len(split_model))) for k in range(len(specific_chunks))}
+        diff = sum(raw_sizes.values()) - len(split_model)
+        if diff>0:
+            #rounding error causes overestimation
+            #remove difference from heaviest layer
+            descending_sort = {k:v for k,v in sorted(raw_sizes.items(), key=lambda x: x[1], reverse=True)}
+            descending_keys = list(descending_sort.keys())
+            d_counter=0
+            while diff > 0:
+                new_diff = descending_sort[descending_keys[d_counter]] - diff
+                if new_diff <= 0:
+                    diff = -1*new_diff + 1
+                    descending_sort[descending_keys[d_counter]] = 1
+                else:
+                    diff = 0
+                    descending_sort[descending_keys[d_counter]] = new_diff
+                d_counter+=1
+            sizes = [descending_sort[r] for r in range(len(descending_sort))]
+        elif diff < 0:
+            #rounding error causes underestimation
+            #add diff to lightest layers
+            diff=-1*diff
+            ascending_sort = {k:v for k,v in sorted(raw_sizes.items(), key=lambda x: x[1])}
+            ascending_keys = list(ascending_sort.keys())
+            ascending_sort[ascending_keys[0]]+=diff
+            sizes = [ascending_sort[r] for r in range(len(ascending_sort))]
+        
+
+
+        
+
+
+
+
+
+
     split_spec = {}
     split_names = list(split_model.keys())
     r=0
@@ -346,7 +394,13 @@ if __name__ == "__main__":
         weights = EfficientNet_B0_Weights.DEFAULT
         pretrained_model = efficientnet_b0(weights=weights).eval()
     
+    elif args.model_type=="vit":
+        # weights=ViT_L_32_Weights
+        # pretrained_model = vit_l_32(weights=weights).eval()
+        weights=ViT_B_16_Weights
+        pretrained_model = vit_b_16(weights=weights).eval()
+    
     model_splitter(pretrained_model, args.model_type, 
-    args.model_split_type, args.world, args.batch_size, [])
+    args.model_split_type, args.world, args.batch_size, args.custom if args.custom!=None else [])
 
     
