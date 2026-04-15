@@ -81,8 +81,8 @@ def custom_pipeline(aot_dir, batch_num, world, rank, cores, iters=1, w_iters=1, 
     if rank!=0:
         for b in range(batch_num):
             placeholder=torch.rand(stage_dict[rank][0], dtype=str_to_dtype(stage_dict[rank][1]))
-            if rank-1 > 0 and len(stage_dict[rank-1]) > 2:
-                star_track = [stage_dict[rank-1][2], [k for k in stage_dict[rank-1][3]]]
+            if len(stage_dict[rank]) > 2:
+                star_track = [stage_dict[rank][2], [k for k in stage_dict[rank][3]]]
                 no_star = False
             exp_recvs_tensors.append(placeholder)
     
