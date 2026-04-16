@@ -86,7 +86,7 @@ def stat_generator(pipe, world, model_type, model_split_type, example_input):
     stage_shapes = {}
     flop_stages = {}
     bs = list(example_input.shape)[0]
-    app_dir = f"./{model_type}_{model_split_type}_{world}_{bs}"
+    app_dir = f"./{model_type}_{model_split_type}_{world}_{bs}" if args.custom==None else f"./{model_type}_{model_split_type}_{world}_{bs}_custom"
     output = torch.empty(size=tuple(example_input.shape), dtype=example_input.dtype)
     Path.mkdir(Path(app_dir), exist_ok=True)
     # quantizer = ArmInductorQuantizer()

@@ -27,6 +27,7 @@ class Args:
     image: str = "./bear.jpeg"
     ip: str = "127.0.0.1"
     port: int = 9123
+    custom: bool = False
     cores: int = 4
     iters: int = 15
     warmup: int = 1
@@ -150,9 +151,11 @@ def custom_pipeline(aot_dir, batch_num, world, rank, cores, iters=1, w_iters=1, 
     
     total_end = time.perf_counter()
     total_times.append(total_end-total_start)
+    e_ts = datetime.now()
+    print(f"{e_ts} model run end", flush=True)
     #NOTE warmuptimes need to be excluded from their current compute time AND from the next layer's network time for true time!
     #NOTE same for total times since it includes both network and compute so two different warmup corrections!
-    return mp_collect_tensor, comp_times, warmup_times, net_times, total_times
+    return mp_collect_tensor, comp_times, warmup_times, net_times, total_times, ts, e_ts
 
 def data_loader(model_type, batch_num, batch_size, image_path):
     # weights, transforms= None, None
@@ -193,13 +196,14 @@ if __name__ == "__main__":
     init_method = f"tcp://{args.ip}:{args.port}"
     dist.init_process_group(backend=args.backend, init_method=init_method, 
     world_size=args.world, rank=args.rank)
-    aot_dir = f"./{args.model_type}_{args.model_split_type}_{args.fake_world}_{args.batch_size}"
+    aot_dir = f"./{args.model_type}_{args.model_split_type}_{args.fake_world}_{args.batch_size}" if args.custom==False else f"./{args.model_type}_{args.model_split_type}_{args.fake_world}_{args.batch_size}_custom"
     inputs = data_loader(args.model_type, args.batch_num, args.batch_size, args.image) if args.fake_rank==0 else []
 
-    op, comp_times, warmup_times, net_times, total_times = custom_pipeline(aot_dir, args.batch_num, args.fake_world, args.fake_rank, args.cores, iters=args.iters, w_iters=args.warmup, inputs=inputs)
+    op, comp_times, warmup_times, net_times, total_times, s_ts, e_ts = custom_pipeline(aot_dir, args.batch_num, args.fake_world, args.fake_rank, args.cores, iters=args.iters, w_iters=args.warmup, inputs=inputs)
     #NOTE difference parsing strat -> literal_eval my goat
     log_dict = {"rank":args.rank, "world":args.world, "comp_times":comp_times, "warmup": warmup_times ,"net_times":net_times, "total_times":total_times}
     print(log_dict, flush=True)
+    print(f"echo 'race4fun' | sudo -S sh -c 'journalctl --since "+ f'"{s_ts}" --until "{e_ts}" -k -o short-iso '+"'| grep -i -E 'throttle|throttled|thermal|cpufreq|under-voltage|voltage'")
     
     # if args.rank+1==args.world:
     #     s = top1_label(args.model_type, op)

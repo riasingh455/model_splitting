@@ -80,7 +80,8 @@ do
                 #cleanup
                 for (( n=0;n<${#nodes[@]};n++ ))
                 do
-                    ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no animesh@${nodes[$n]} "pkill -9 roofline; pkill -9 python3; echo 'race4fun' | sudo -S sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches';"			    
+                    ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no animesh@${nodes[$n]} "pkill -9 roofline; pkill -9 python3; $(tail -n 1 ${path_dst}/speed_chronos${nodes[$n]}_${fake_rank}.log) > ${path_dst}/speed_journal${nodes[$n]}_${fake_rank}.log"
+                    ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no animesh@${nodes[$n]} "echo 'race4fun' | sudo -S sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches';"
                 done
 
             done
