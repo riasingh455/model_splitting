@@ -48,10 +48,10 @@ fi
 
 highest_flop_rank=( 0 0 1 1 2 )
 # for repeat in 3{1..10}
-for repeat in 2 3 4 5 6
+for repeat in 1
 do
     #for fake_world in 2 3 4 5
-    for fake_world in 2
+    for fake_world in 3 4 5 6 7 8
     do
         # for (( conc_val=0; conc_val<$fake_world; conc_val++ ))
         # do
