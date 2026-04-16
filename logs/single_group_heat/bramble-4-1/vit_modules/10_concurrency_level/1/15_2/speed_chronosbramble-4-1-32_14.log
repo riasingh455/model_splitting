@@ -1,0 +1,5 @@
+Model vit and split modules
+2026-04-16 14:15:49.175926 Sync done -> model run start
+2026-04-16 14:15:50.835812 model run end
+{'rank': 5, 'world': 10, 'comp_times': [1.631549146026373], 'warmup': [[[367, 96, 119, 120, 116, 112, 112, 111, 113, 122, 138], [347, 97, 119, 114, 109, 113, 112, 110, 116, 125, 126], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]], 'net_times': [], 'total_times': [1.6598637737333775]}
+echo 'race4fun' | sudo -S sh -c 'journalctl --since "2026-04-16 14:15:49.175926" --until "2026-04-16 14:15:50.835812" -k -o short-iso '| grep -i -E 'throttle|throttled|thermal|cpufreq|under-voltage|voltage'
