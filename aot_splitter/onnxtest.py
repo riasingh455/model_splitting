@@ -26,13 +26,18 @@ def shape_shifter(numpy_shape, numpy_arr):
 def silly_test(core, path, rank, iters, shape_dict):
     # input_name = session.get_inputs()[0].name
     # print(shape_dict[rank])
+    sess_opt = ort.SessionOptions()
+    sess_opt.intra_op_num_threads = 0
+    sess_opt.inter_op_num_threads=0
+    # sess_opt.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+    # sess_opt.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
     x=np.empty(shape_dict[rank][0], dtype=np.float32)
     #network stuff technically here somewhere?
     #shapeshift to match input layer of model slice
     if len(shape_dict[rank])>2:
         x=shape_shifter(shape_dict[rank][2:], x)
 
-    ort_sess = ort.InferenceSession(f'{path}/exe_split_{rank}.pte_quant.onnx')
+    ort_sess = ort.InferenceSession(f'{path}/exe_split_{rank}.pte_quant.onnx', sess_options=sess_opt)
     input_name = ort_sess.get_inputs()[0].name
     ts = datetime.now()
     print(f"{ts} Sync done -> model run start", flush=True)
