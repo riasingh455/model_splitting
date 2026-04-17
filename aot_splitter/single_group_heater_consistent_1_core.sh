@@ -56,10 +56,10 @@ nodes=( $(node_select) )
 for repeat in 1
 do
     # for fake_world in 5 10 15
-    for fake_world in 5
+    for fake_world in 2
     do
         # for (( fake_rank=0;fake_rank<$fake_world;fake_rank++ ))
-        for fake_rank in 2 3
+        for fake_rank in 0
         do
             for wait_flag in 1 0
             do
@@ -74,10 +74,10 @@ do
                 do
                     ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no animesh@${nodes[$n]} "pkill -9 roofline; pkill -9 python3; echo 'race4fun' | sudo -S sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches';"
                     # timeout 10m ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no animesh@${nodes[$n]} "pushd $path_prefix; node_prefix=$node_prefix world=$conc_val rank=$n master=${nodes[0]} model_type=$model_type model_split=$model_split bnum=$bnum ./roofline_pi_script_no_slurm_no_temp.sh &" &
-                    command="python3 single_runner.py --custom --cores ${cores} --rank ${n} --world ${conc_val} --ip ${nodes[0]} --port 8123 --warmup 1 --batch-size 1 --batch-num 1 --iters 10 --model-type ${model_type} --model-split-type ${model_split}"
+                    command="python3 single_runner.py --custom --cores ${cores} --rank ${n} --world ${conc_val} --ip ${nodes[0]} --port 8123 --warmup 1 --batch-size 4 --batch-num 1 --iters 10 --model-type ${model_type} --model-split-type ${model_split}"
                     if [[ $wait_flag -eq 1 ]]
                     then
-                        command="python3 single_runner.py --custom --cores ${cores} --rank 0 --world 1 --ip ${nodes[$n]} --port 8123 --warmup 1 --batch-size 1 --batch-num 1 --iters 10 --model-type ${model_type} --model-split-type ${model_split}"   
+                        command="python3 single_runner.py --custom --cores ${cores} --rank 0 --world 1 --ip ${nodes[$n]} --port 8123 --warmup 1 --batch-size 4 --batch-num 1 --iters 10 --model-type ${model_type} --model-split-type ${model_split}"   
                     fi
                     command="${command} --fake_rank ${fake_rank} --fake_world ${fake_world}"
                     timeout 10m ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no animesh@${nodes[$n]} "pushd $path_prefix/aot_splitter; source /home/animesh/model_splitting/pi-torch/bin/activate; ${command} > ${path_dst}/speed_chronos${nodes[$n]}_${fake_rank}.log &" &

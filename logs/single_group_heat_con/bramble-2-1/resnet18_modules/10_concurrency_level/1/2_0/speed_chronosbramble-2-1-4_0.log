@@ -1,0 +1,5 @@
+Model resnet18 and split modules
+2026-04-16 20:40:30.515280 Sync done -> model run start
+2026-04-16 20:41:31.258943 model run end
+{'rank': 1, 'world': 10, 'comp_times': [60.712227917974815], 'warmup': [[[5844, 5485, 5565, 5191, 5730, 5368, 5508, 5277, 5660, 5219, 5747], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]], 'net_times': [], 'total_times': [60.743639880092815]}
+echo 'race4fun' | sudo -S sh -c 'journalctl --since "2026-04-16 20:40:30.515280" --until "2026-04-16 20:41:31.258943" -k -o short-iso '| grep -i -E 'throttle|throttled|thermal|cpufreq|under-voltage|voltage'
