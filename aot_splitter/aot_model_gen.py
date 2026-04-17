@@ -15,6 +15,8 @@ from torch.utils.flop_counter import FlopCounterMode
 from executorch.backends.xnnpack.partition.xnnpack_partitioner import XnnpackPartitioner
 from executorch.exir import to_edge, to_edge_transform_and_lower, EdgeCompileConfig
 import torchao
+# import onnxruntime
+from onnxruntime.quantization import quantize_static, quantize_dynamic, QuantType
 from executorch.backends.xnnpack.quantizer.xnnpack_quantizer import XNNPACKQuantizer, get_symmetric_quantization_config
 from torchao.quantization.pt2e.quantize_pt2e import convert_pt2e, prepare_pt2e
 # from executorch.backends.xnnpack.quantizer.xnnpack_quantizer import XNNPACKQuantizer, get_symmetric_quantization_config
@@ -37,6 +39,32 @@ class Args:
     model_split_type:str = "children"
     image: str = "./bear.jpeg"
     custom: list[int] = None
+
+def onnx_stuff(exp, ex_inp):
+    import onnx
+    from onnxsim import simplify
+    # from onnx import helper, TensorProto
+    model = onnx.load('test.onnx')
+    # Replace all fixed batch dimensions with symbolic dimension
+    # def make_dynamic(model):
+    #     for input_tensor in model.graph.input:        
+    #         # Set first dimension to be symbolic (variable)        
+    #         dim = input_tensor.type.tensor_type.shape.dim[0]
+    #         dim.ClearField("dim_value")
+    #         dim.dim_param = "batch_size"
+    #     for output_tensor in model.graph.output:
+    #         if len(output_tensor.type.tensor_type.shape.dim) > 0:
+    #             dim = output_tensor.type.tensor_type.shape.dim[0]
+    #             dim.ClearField("dim_value")
+    #             dim.dim_param = "batch_size" 
+    #     return model
+    # model = make_dynamic(model)
+    # onnx.save(model, 'test_dynamic.onnx')
+    model_simp, check = simplify(model)
+    if check:
+        onnx.save(model_simp, 'test_simp.onnx')
+    # quantize_dynamic("test_dynamic.onnx", "test_quant.onnx", weight_type=QuantType.QInt8)
+    quantize_dynamic("test_simp.onnx", "test_quant.onnx", weight_type=QuantType.QUInt8)
 
 def executorch_stuff(fname, exp, cal_sample, ex_inp, star=False):
 
@@ -66,6 +94,11 @@ def executorch_stuff(fname, exp, cal_sample, ex_inp, star=False):
     exported_program = torch.export.export(quantized_model, ex_inp, strict=True)
     re_exp = torch.export.export(exported_program.module(), ex_inp)
     torch.export.save(re_exp, f"{fname}.exp")#"resnet_exp_strict_rexp.model")
+    onnx_stuff(exp, ex_inp)
+    torch.onnx.export(exp, ex_inp, "test.onnx", input_names=['input'], output_names=['output'])
+    # dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}})
+    # quantize_dynamic("test.onnx", "test_quant.onnx", weight_type=QuantType.QInt8)
+    # quantize_static("test.onnx", "test_quant.onnx", weight_type=QuantType.QInt8,per_channel=True)
     return re_exp.module()
     # torch.save(exported_program.module().state_dict(), "resnet_exp_strict.model")
 
@@ -176,7 +209,7 @@ def stat_generator(pipe, world, model_type, model_split_type, example_input):
             # quantize_(temp, Int4WeightOnlyConfig(group_size=32, version=1) )
             # print(temp)
             # with torch.no_grad():
-            exp =  torch.export.export(temp, (example_input,))
+            exp =  torch.export.export(temp, (example_input,), strict=True)
             temp = executorch_stuff(f"{app_dir}/exe_split_{rank}.pte", exp.module(), example_input, (example_input,))
             n_output = temp.forward(example_input)
             # exp=exp.run_decompositions(decomp_table=torch.export.default_decompositions())
