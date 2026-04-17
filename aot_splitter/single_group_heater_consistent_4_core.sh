@@ -56,10 +56,12 @@ nodes=( $(node_select) )
 for repeat in 1
 do
     # for fake_world in 5 10 15
-    for fake_world in 15
+    # for fake_world in 15
+    for fake_world in 2
     do
         # for (( fake_rank=0;fake_rank<$fake_world;fake_rank++ ))
-        for fake_rank in 4 13
+        # for fake_rank in 4 13
+        for fake_rank in 0
         do
             for wait_flag in 1 0
             do
