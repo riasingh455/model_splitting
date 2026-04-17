@@ -40,11 +40,11 @@ class Args:
     image: str = "./bear.jpeg"
     custom: list[int] = None
 
-def onnx_stuff(exp, ex_inp):
+def onnx_stuff(fname):
     import onnx
     from onnxsim import simplify
     # from onnx import helper, TensorProto
-    model = onnx.load('test.onnx')
+    model = onnx.load(f'{fname}.onnx')
     # Replace all fixed batch dimensions with symbolic dimension
     # def make_dynamic(model):
     #     for input_tensor in model.graph.input:        
@@ -62,14 +62,18 @@ def onnx_stuff(exp, ex_inp):
     # onnx.save(model, 'test_dynamic.onnx')
     model_simp, check = simplify(model)
     if check:
-        onnx.save(model_simp, 'test_simp.onnx')
+        onnx.save(model_simp, f'{fname}_simp.onnx')
+    Path.unlink(Path(f'{fname}.onnx'))
+    Path.unlink(Path(f'{fname}.onnx.data'))
     # quantize_dynamic("test_dynamic.onnx", "test_quant.onnx", weight_type=QuantType.QInt8)
-    quantize_dynamic("test_simp.onnx", "test_quant.onnx", weight_type=QuantType.QUInt8)
+    quantize_dynamic(f"{fname}_simp.onnx", f"{fname}_quant.onnx", weight_type=QuantType.QUInt8)
+    Path.unlink(Path(f'{fname}_simp.onnx'))
 
-def executorch_stuff(fname, exp, cal_sample, ex_inp, star=False):
+def executorch_stuff(fname, rank, exp, cal_sample, ex_inp, star=False):
 
     #actually quantization lmao
-    
+    torch.onnx.export(exp, ex_inp, f"{fname}.onnx", input_names=['input'], output_names=['output'])
+    onnx_stuff(fname)
     # sample_inputs = (torch.randn(1, 3, 224, 224), )
     qparams = get_symmetric_quantization_config(is_per_channel=True)
     quantizer = XNNPACKQuantizer()
@@ -94,8 +98,7 @@ def executorch_stuff(fname, exp, cal_sample, ex_inp, star=False):
     exported_program = torch.export.export(quantized_model, ex_inp, strict=True)
     re_exp = torch.export.export(exported_program.module(), ex_inp)
     torch.export.save(re_exp, f"{fname}.exp")#"resnet_exp_strict_rexp.model")
-    onnx_stuff(exp, ex_inp)
-    torch.onnx.export(exp, ex_inp, "test.onnx", input_names=['input'], output_names=['output'])
+
     # dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}})
     # quantize_dynamic("test.onnx", "test_quant.onnx", weight_type=QuantType.QInt8)
     # quantize_static("test.onnx", "test_quant.onnx", weight_type=QuantType.QInt8,per_channel=True)
@@ -209,8 +212,8 @@ def stat_generator(pipe, world, model_type, model_split_type, example_input):
             # quantize_(temp, Int4WeightOnlyConfig(group_size=32, version=1) )
             # print(temp)
             # with torch.no_grad():
-            exp =  torch.export.export(temp, (example_input,), strict=True)
-            temp = executorch_stuff(f"{app_dir}/exe_split_{rank}.pte", exp.module(), example_input, (example_input,))
+            exp =  torch.export.export(temp, (example_input,))
+            temp = executorch_stuff(f"{app_dir}/exe_split_{rank}.pte", rank, exp.module(), example_input, (example_input,))
             n_output = temp.forward(example_input)
             # exp=exp.run_decompositions(decomp_table=torch.export.default_decompositions())
             # exp = exp.module()
@@ -236,13 +239,13 @@ def stat_generator(pipe, world, model_type, model_split_type, example_input):
             if type(output)!=type(example_input):
                 exp = torch.export.export(temp, output)
                 #TODO make first output actually *output!
-                temp = executorch_stuff(f"{app_dir}/exe_split_{rank}.pte", exp.module(), output, output, star=True)
+                temp = executorch_stuff(f"{app_dir}/exe_split_{rank}.pte", rank, exp.module(), output, output, star=True)
                 # torch.export.save(exp, f"{app_dir}/split_{rank}.pt2")
                 n_output = temp.forward(*output)
                 
             else:
                 exp = torch.export.export(temp, (output,))
-                temp = executorch_stuff(f"{app_dir}/exe_split_{rank}.pte", exp.module(), output, (output,))
+                temp = executorch_stuff(f"{app_dir}/exe_split_{rank}.pte", rank, exp.module(), output, (output,))
                 # torch.export.save(exp, f"{app_dir}/split_{rank}.pt2")
                 n_output = temp.forward(output)
         
