@@ -27,10 +27,12 @@ def silly_test(core, path, rank, iters, shape_dict):
     # input_name = session.get_inputs()[0].name
     # print(shape_dict[rank])
     sess_opt = ort.SessionOptions()
-    sess_opt.intra_op_num_threads = 0
-    sess_opt.inter_op_num_threads=0
+    sess_opt.intra_op_num_threads = 1
+    sess_opt.inter_op_num_threads=1
     sess_opt.add_session_config_entry("session.intra_op.allow_spinning", "0")
     providers = ['CPUExecutionProvider']
+    sess_opt.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
+
     # sess_opt.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
     # sess_opt.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
     x=np.empty(shape_dict[rank][0], dtype=np.float32)
