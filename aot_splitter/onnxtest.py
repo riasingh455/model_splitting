@@ -29,6 +29,8 @@ def silly_test(core, path, rank, iters, shape_dict):
     sess_opt = ort.SessionOptions()
     sess_opt.intra_op_num_threads = 0
     sess_opt.inter_op_num_threads=0
+    sess_opt.add_session_config_entry("session.intra_op.allow_spinning", "0")
+    providers = ['CPUExecutionProvider']
     # sess_opt.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
     # sess_opt.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
     x=np.empty(shape_dict[rank][0], dtype=np.float32)
@@ -37,7 +39,7 @@ def silly_test(core, path, rank, iters, shape_dict):
     if len(shape_dict[rank])>2:
         x=shape_shifter(shape_dict[rank][2:], x)
 
-    ort_sess = ort.InferenceSession(f'{path}/exe_split_{rank}.pte_quant.onnx', sess_options=sess_opt)
+    ort_sess = ort.InferenceSession(f'{path}/exe_split_{rank}.pte_quant.onnx', sess_options=sess_opt, providers=providers)
     input_name = ort_sess.get_inputs()[0].name
     ts = datetime.now()
     print(f"{ts} Sync done -> model run start", flush=True)
