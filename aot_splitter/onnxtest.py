@@ -40,7 +40,7 @@ def silly_test(core, path, rank, iters, shape_dict, f_ts):
     #network stuff technically here somewhere?
     #shapeshift to match input layer of model slice
     if len(shape_dict[rank])>2:
-        x=shape_shifter(shape_dict[rank][2:], x)
+        x=shape_shifter(shape_dict[rank][2:], x[0])
 
     ort_sess = ort.InferenceSession(f'{path}/exe_split_{rank}.pte_quant.onnx', sess_options=sess_opt, providers=providers)
     
