@@ -72,12 +72,13 @@ do
                 path_dst="${path_prefix}/logs/single_group_heat_con/${node_prefix}/${model_type}_${model_split}/${conc_val}_concurrency_level/${repeat}/${fake_world}_${wait_flag}/"
                 mkdir -p ${path_dst}
                 waiters=()
+		dt=$(date -d '+120 seconds' +%s)
                 for (( n=0;n<${#nodes[@]};n++ ))
                 do
                     ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no animesh@${nodes[$n]} "pkill -9 roofline; pkill -9 python3; echo 'race4fun' | sudo -S sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches';"
                     # timeout 10m ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no animesh@${nodes[$n]} "pushd $path_prefix; node_prefix=$node_prefix world=$conc_val rank=$n master=${nodes[0]} model_type=$model_type model_split=$model_split bnum=$bnum ./roofline_pi_script_no_slurm_no_temp.sh &" &
                     #command="python3 onnxtest.py 10 ./vit_modules_3_1_custom 0 4 $(date -d '+60 seconds' +%s)"
-                    command="python3 onnxtest.py 10 ./vit_modules_3_1_custom 0 1 $(date -d '+60 seconds' +%s)"
+                    command="python3 onnxtest.py 10 ./vit_modules_3_1_custom 0 4 ${dt}"
 		    echo $command
                     # command="python3 single_runner.py --custom --cores ${cores} --rank ${n} --world ${conc_val} --ip ${nodes[0]} --port 8123 --warmup 1 --batch-size 1 --batch-num 1 --iters 10 --model-type ${model_type} --model-split-type ${model_split}"
                     # if [[ $wait_flag -eq 1 ]]
