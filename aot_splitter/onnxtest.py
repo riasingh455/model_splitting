@@ -41,7 +41,7 @@ def silly_test(core, path, rank, iters, shape_dict, f_ts):
     
     #fake_barrier(self_host, other_hosts, extra=core)
     fake_barrier(f_ts)
-
+    comp_times=[]
     ts = datetime.now()
     print(f"{ts} Sync done -> model run start", flush=True)
     #print sync message -> do network sync here though
@@ -49,11 +49,13 @@ def silly_test(core, path, rank, iters, shape_dict, f_ts):
     # print([i.name for i in ort_sess.get_inputs()])
     input_map = {i.name: x[ind] for ind, i in enumerate(ort_sess.get_inputs())}
     for _ in range(iters):
-        outputs = ort_sess.run(None, input_map)
-
+        per_iter_st = time.perf_counter()
+        ort_sess.run(None, input_map)
+        per_iter_et = time.perf_counter()
+        comp_times.append(round(per_iter_et-per_iter_st,3))
         # print(core, outputs[0])
     total_end = time.perf_counter()
-    print(core, round(total_end-total_start,3) )
+    print(core, round(total_end-total_start,3), comp_times )
     #fake_barrier_rmv(self_host, core)
     
 # x, y = test_data[0][0], test_data[0][1]

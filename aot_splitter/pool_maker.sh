@@ -68,7 +68,7 @@ do
                 timeout 10m ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no animesh@${n} "${full_command}" &
                 waiters+=($!)
 
-                ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no animesh@${n} "sleep 60; ${full_hcommand}" &
+                ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no animesh@${n} "${full_hcommand}" &
                 killers+=($!)
         done
     wait ${waiters[@]}

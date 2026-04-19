@@ -1,0 +1,10 @@
+2026-04-19 00:19:54.855401 Sync done -> model run start
+2026-04-19 00:19:54.855405 Sync done -> model run start
+2026-04-19 00:19:54.855400 Sync done -> model run start
+2026-04-19 00:19:54.855400 Sync done -> model run start
+3 6.551
+2 6.586
+1 6.737
+0 6.806
+2026-04-19 00:20:01.693738 Sync done -> model run start
+echo 'race4fun' | sudo -S sh -c 'journalctl --since "2026-04-19 00:19:54.080223" --until "2026-04-19 00:20:01.693738" -k -o short-iso '| grep -i -E 'throttle|throttled|thermal|cpufreq|under-voltage|voltage'
