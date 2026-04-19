@@ -72,5 +72,9 @@ do
                 killers+=($!)
         done
     wait ${waiters[@]}
-    kill -9 ${killers[@]}
+    # kill -9 ${killers[@]}
+    for k in ${killers[@]}
+    do
+        kill -9 $k
+    done
 done
