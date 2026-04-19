@@ -27,12 +27,8 @@ def shape_shifter(numpy_shape, numpy_arr):
 def silly_test(core, path, rank, iters, shape_dict, f_ts):
     # input_name = session.get_inputs()[0].name
     # print(shape_dict[rank])
-    sess_opt = ort.SessionOptions()
-    sess_opt.intra_op_num_threads = 1
-    sess_opt.inter_op_num_threads=1
-    sess_opt.add_session_config_entry("session.intra_op.allow_spinning", "0")
-    providers = ['CPUExecutionProvider']
-    sess_opt.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
+    ort_sess = ort.InferenceSession(f'{path}/exe_split_{rank}.pte_quant.onnx', sess_options=sess_opt, providers=providers)
+    
 
     # sess_opt.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
     # sess_opt.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
@@ -42,7 +38,6 @@ def silly_test(core, path, rank, iters, shape_dict, f_ts):
     if len(shape_dict[rank])>2:
         x=shape_shifter(shape_dict[rank][2:], x[0])
 
-    ort_sess = ort.InferenceSession(f'{path}/exe_split_{rank}.pte_quant.onnx', sess_options=sess_opt, providers=providers)
     
     #fake_barrier(self_host, other_hosts, extra=core)
     fake_barrier(f_ts)
@@ -92,6 +87,7 @@ def fake_barrier_rmv(self_host, extra=''):
     #Path.rmdir(Path(dname))
 
 if __name__=="__main__":
+    mp.set_start_method("fork")
     procs=[]
     iters = int(sys.argv[1])
     path = sys.argv[2]
@@ -115,10 +111,17 @@ if __name__=="__main__":
     #network, sync technically goes here? but skip for now
     #print(datetime.now(), other_hosts)
     #exit() 
+    sess_opt = ort.SessionOptions()
+    sess_opt.intra_op_num_threads = 1
+    sess_opt.inter_op_num_threads=1
+    sess_opt.add_session_config_entry("session.intra_op.allow_spinning", "0")
+    providers = ['CPUExecutionProvider']
+    sess_opt.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
+
     s_ts = datetime.now()
     # data = np.random.rand(batch_size, 224, 224, 3).astype(np.float32)
     for core in range(cores):
-        p = mp.Process(target=silly_test, args=(core, path, rank, iters, shape_dict, f_ts, ))
+        p = mp.Process(target=silly_test, args=( core, path, rank, iters, shape_dict, f_ts, ))
         p.start()
         procs.append(p)
 
