@@ -8,6 +8,7 @@ from datetime import datetime
 import time
 import zmq
 from functools import reduce
+import gc
 #from pathlib import Path
 
 def shape_shifter(numpy_shape, numpy_arr):
@@ -51,14 +52,17 @@ def silly_test(core, path, rank, iters, shape_dict, x):
     total_start = time.perf_counter()
     # print([i.name for i in ort_sess.get_inputs()])
     input_map = {i.name: x[ind] for ind, i in enumerate(ort_sess.get_inputs())}
-    output=None
+    outputs=[]
+    comp_times=[]
     for _ in range(iters):
-        output = ort_sess.run(None, input_map)
+        per_ts=time.perf_counter()
+        outputs.append(ort_sess.run(None, input_map))
+        comp_times.append(time.perf_counter()-per_ts)
 
         # print(core, outputs[0])
     total_end = time.perf_counter()
-    print(core, round(total_end-total_start,3) )
-    return output
+    print(core, round(total_end-total_start,3), comp_times )
+    return np.stack(outputs)
     #fake_barrier_rmv(self_host, core)
     
 # x, y = test_data[0][0], test_data[0][1]
@@ -144,10 +148,12 @@ if __name__=="__main__":
         sync_recver.connect(f"tcp://{other_hosts[0]}:{port-rank}")
 
         sync_sender.send(b'1')
-        sync_sender.close()
+        if rank == world-1:
+            sync_sender.close()
 
         raw = sync_recver.recv()
         sync_recver.close()
+        del sync_recver
     else:
         sync_sender = context.socket(zmq.PUSH)
         sync_sender.bind(f"tcp://*:{port}")
@@ -160,41 +166,48 @@ if __name__=="__main__":
         
         for ind in range(1,len(other_hosts[1:])+1):
             sync_sender.send(b'1')
-        sync_sender.close()
+        # sync_sender.close()
         
         print("ALL SYNC")
-
-
-
-
-    
-
-    
+    receiver = context.socket(zmq.PULL)
+    if rank!=0:
+        receiver.connect(f"tcp://{other_hosts[rank-1]}:{port-1}")
+    else:
+        receiver.close()
+        del receiver
+    if rank==world-1:
+        sync_sender.close()
+        del sync_sender 
+    gc.collect()
     s_ts = datetime.now()
     net_times=[]
     for _ in range(batch_num):
         recv_st = time.perf_counter()
+        np_array=[]
+        recv_size = 0
+        send_size = 0
         if rank!=0:
-            receiver = context.socket(zmq.PULL)
-            receiver.connect(f"tcp://{other_hosts[rank-1]}:{port-1}")
-            np_array=[]
-            for _ in range(batch_num):
-                raw_buffer = receiver.recv()
-                np_arr = np.frombuffer(raw_buffer, dtype=str_to_dtype(numpy_shape[1]))
-                #filter data by iters and or cores
-                flattened_length = reduce(lambda x,y: x*y, numpy_shape[0])
-                np_arr = np_arr[:flattened_length]
-                np_array.append(np_arr.reshape(numpy_shape[0]))
+            # for _ in range(batch_num):
+            raw_buffer = receiver.recv()
+            np_arr = np.frombuffer(raw_buffer, dtype=str_to_dtype(numpy_shape[1]))
+            recv_size = np_arr.nbytes
+            #filter data by iters and or cores
+            flattened_length = np.prod(numpy_shape[0])
+            np_arr = np_arr[:flattened_length]
+            np_array.append(np_arr.reshape(numpy_shape[0]))
         recv_et = time.perf_counter()
         
         
         if rank==0:
-            np_array=[np.empty(shape_dict[rank][0], dtype=np.float32)]*batch_num
+            np_array.append(np.empty(shape_dict[rank][0], dtype=np.float32))
         # data = np.random.rand(batch_size, 224, 224, 3).astype(np.float32)
         outputs=[]
         with mp.Pool(processes=cores) as p:
             for i in  p.starmap(silly_test, [(core, path, rank, iters, shape_dict, np_array,) for core in range(cores)]):
                 outputs.append(i)
+            del np_array
+            # del np_arr
+
             np_output=np.stack(outputs)
         # for core in range(cores):
         #     p = mp.Process(target=silly_test, args=(ort_sess, core, path, rank, iters, shape_dict, [np_array], ))
@@ -206,13 +219,21 @@ if __name__=="__main__":
         
         send_st = time.perf_counter()
         if rank!=world-1:
-            sender = context.socket(zmq.PUSH)
-            sender.bind(f"tcp://*:{port}")
-            sender.send(np_output)
+            send_size = np_output.nbytes
+            sync_sender.send(np_output)
+            del np_output
         send_et = time.perf_counter()
-        net_times.append([recv_et-recv_st, send_et-send_st])
+
+        net_times.append([round(recv_et-recv_st,3), round(send_et-send_st,3), recv_size, send_size ])
+        gc.collect()
     e_ts = datetime.now()
-        
+    if rank!=world-1:
+        sync_sender.close()
+        del sync_sender
+    if rank!=0:
+        receiver.close()
+        del receiver
+    gc.collect()
     print(f"{e_ts} Sync done -> model run start", flush=True)
     print(f"net_times: {net_times}")
     #fake_barrier_rmv(self_host)
