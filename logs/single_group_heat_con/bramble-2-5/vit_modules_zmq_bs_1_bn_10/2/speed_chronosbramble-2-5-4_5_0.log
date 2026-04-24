@@ -1,0 +1,43 @@
+ALL SYNC
+2026-04-21 07:00:03.846245 Sync done -> model run start
+2026-04-21 07:00:03.846245 Sync done -> model run start
+2026-04-21 07:00:03.846245 Sync done -> model run start
+2026-04-21 07:00:03.861906 Sync done -> model run start
+1 2.27 [2.269534590886906]
+0 2.14 [2.1398739209398627]
+3 2.266 [2.266118448926136]
+2026-04-21 07:00:16.073955 Sync done -> model run start
+2026-04-21 07:00:16.074066 Sync done -> model run start
+2026-04-21 07:00:16.074097 Sync done -> model run start
+2026-04-21 07:00:16.153923 Sync done -> model run start
+2 2.11 [2.11033494095318]
+1 2.11 [2.1103358259424567]
+0 2.127 [2.126801223028451]
+3 2.202 [2.2015824299305677]
+2026-04-21 07:00:29.588702 Sync done -> model run start
+2026-04-21 07:00:29.588703 Sync done -> model run start
+2026-04-21 07:00:29.589023 Sync done -> model run start
+2026-04-21 07:00:29.647794 Sync done -> model run start
+2 2.125 [2.1250697588548064]
+1 2.125 [2.1249686651863158]
+0 2.134 [2.1334088630974293]
+3 2.225 [2.224591352045536]
+2026-04-21 07:00:43.402029 Sync done -> model run start
+2026-04-21 07:00:43.402035 Sync done -> model run start
+2026-04-21 07:00:43.421365 Sync done -> model run start
+2026-04-21 07:00:43.430569 Sync done -> model run start
+0 2.042 [2.0422271999996156]
+2 2.044 [2.043923032004386]
+3 2.051 [2.050898751942441]
+1 2.15 [2.1499876889865845]
+2026-04-21 07:00:50.413052 Sync done -> model run start
+2026-04-21 07:00:50.415544 Sync done -> model run start
+2026-04-21 07:00:50.428256 Sync done -> model run start
+2026-04-21 07:00:50.441038 Sync done -> model run start
+1 2.075 [2.0748724159784615]
+3 2.096 [2.0961457220837474]
+2 2.188 [2.1882370638195425]
+0 2.078 [2.0774224649649113]
+2026-04-21 07:00:53.354299 Sync done -> model run start
+net_times: [[0.0, 9.076, 0, 4529019], [0.0, 10.352, 0, 4735], [0.0, 10.656, 0, 4735], [0.0, 4.027, 0, 4735], [0.0, 0.62, 0, 4735]]
+echo 'race4fun' | sudo -S sh -c 'journalctl --since "2026-04-21 07:00:02.056449" --until "2026-04-21 07:00:53.354299" -k -o short-iso '| grep -i -E 'throttle|throttled|thermal|cpufreq|under-voltage|voltage'
