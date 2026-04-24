@@ -58,7 +58,8 @@ do
     #nodes=( $(node_select) )
     # for fake_world in 5 10 15
     # for fake_world in 15
-    for fake_world in 5 2
+    #for fake_world in 5 2
+    for fake_world in 5
     do
 	conc_val=$fake_world
     	nodes=( $(node_select) )
@@ -96,23 +97,23 @@ do
                     	# command="python3 single_runner.py --custom --cores ${cores} --rank ${n} --world ${conc_val} --ip ${nodes[0]} --port 8123 --warmup 1 --batch-size 4 --batch-num 1 --iters 10 --model-type ${model_type} --model-split-type ${model_split}"
                     	# onnxtest.py 10 ./vit_modules_3_1_custom 0 4 ${dt}
                     		
-			hcommand="mac_ver=0 log_path=${path_dst} ./temp_speed_reader.sh"
-                    	full_hcommand="pushd ${path_prefix}/aot_splitter;${hcommand} &"
+			#hcommand="mac_ver=0 log_path=${path_dst} ./temp_speed_reader.sh"
+                    	#full_hcommand="pushd ${path_prefix}/aot_splitter;${hcommand} &"
                     		
 			command="python3 onnxtest.py 10 ./${model_type}_${model_split}_${fake_world}_1_custom ${n} 4 ${dt}"
                     	# command="${command} --fake_rank ${fake_rank} --fake_world ${fake_world}"
                     	timeout 10m ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no animesh@${nodes[$n]} "pushd $path_prefix/aot_splitter; source /home/animesh/model_splitting/pi-torch/bin/activate; ${command} > ${path_dst}/speed_chronos${nodes[$n]}_${fake_world}_${n}.log &" &
                     	wait_pid=$!
-			ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no animesh@${nodes[$n]} "${full_hcommand}" &
-                    	kill_pid=$!
+			#ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no animesh@${nodes[$n]} "${full_hcommand}" &
+                    	#kill_pid=$!
 			if [[ $wait_flag -eq 1 ]]
                     	then
                     	     wait $wait_pid
-			     kill -9 $kill_pid
+			     #kill -9 $kill_pid
 			     #continue
                     	fi
                     	waiters+=($wait_pid)
-                    	killers+=($kill_pid)
+                    	#killers+=($kill_pid)
                 done
                 echo "Selected ${nodes[@]} ${world}"
 		if [[ $wait_flag -eq 0 ]]
@@ -122,10 +123,10 @@ do
 		#cleanup
                 for (( n=0;n<${#nodes[@]};n++ ))
                 do
-			if [[ $wait_flag -eq 0 ]]
-			then
-				ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no animesh@${nodes[$n]} "kill -9 ${killers[$n]};"
-			fi
+			#if [[ $wait_flag -eq 0 ]]
+			#then
+			#	ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no animesh@${nodes[$n]} "kill -9 ${killers[$n]};"
+			#fi
                   	ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no animesh@${nodes[$n]} "pkill -9 temp_speed; pkill -9 model_rank; pkill -9 python3;"
                     	# $(tail -n 1 ${path_dst}/speed_chronos${nodes[$n]}_${fake_rank}.log) > ${path_dst}/speed_journal${nodes[$n]}_${fake_rank}.log
                     	ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no animesh@${nodes[$n]} "echo 'race4fun' | sudo -S sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches';"

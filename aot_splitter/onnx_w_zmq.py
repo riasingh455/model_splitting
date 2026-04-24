@@ -7,8 +7,9 @@ from ast import literal_eval
 from datetime import datetime
 import time
 import zmq
-from functools import reduce
+# from functools import reduce
 import gc
+# import zlib
 #from pathlib import Path
 
 def shape_shifter(numpy_shape, numpy_arr):
@@ -56,13 +57,14 @@ def silly_test(core, path, rank, iters, shape_dict, x):
     comp_times=[]
     for _ in range(iters):
         per_ts=time.perf_counter()
-        outputs.append(ort_sess.run(None, input_map))
+        # outputs.append(ort_sess.run(None, input_map))
+        outputs = ort_sess.run(None, input_map)
         comp_times.append(time.perf_counter()-per_ts)
 
         # print(core, outputs[0])
     total_end = time.perf_counter()
     print(core, round(total_end-total_start,3), comp_times )
-    return np.stack(outputs)
+    return outputs if type(outputs) == type(np.array([])) else np.array(outputs)
     #fake_barrier_rmv(self_host, core)
     
 # x, y = test_data[0][0], test_data[0][1]
@@ -139,45 +141,72 @@ if __name__=="__main__":
     providers = ['CPUExecutionProvider']
     sess_opt.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
 
+    ack_sender = context.socket(zmq.PUSH)
+    ack_sender.setsockopt(zmq.SNDHWM, 2)
+    ack_sender.setsockopt(zmq.SNDBUF, 0)
+    ack_sender.bind(f"tcp://*:{port+1000}")
     #sync messages between all procs before starting
     if rank!=0:
         sync_sender = context.socket(zmq.PUSH)
         sync_recver = context.socket(zmq.PULL)
+        
+        sync_recver.setsockopt(zmq.RCVHWM, 2)
+        sync_recver.setsockopt(zmq.RCVBUF, 0)
+        sync_sender.setsockopt(zmq.SNDHWM, 2)
+        sync_sender.setsockopt(zmq.SNDBUF, 0)
 
         sync_sender.bind(f"tcp://*:{port}")
         sync_recver.connect(f"tcp://{other_hosts[0]}:{port-rank}")
 
         sync_sender.send(b'1')
-        if rank == world-1:
-            sync_sender.close()
+        # if rank == world-1:
+        #     sync_sender.close()
+        #     del sync_sender
 
         raw = sync_recver.recv()
+        time.sleep(1)
         sync_recver.close()
         del sync_recver
     else:
         sync_sender = context.socket(zmq.PUSH)
+        sync_sender.setsockopt(zmq.SNDHWM, 2)
+        sync_sender.setsockopt(zmq.SNDBUF, 0)
         sync_sender.bind(f"tcp://*:{port}")
 
         for ind in range(1,len(other_hosts[1:])+1):
             sync_recver = context.socket(zmq.PULL)
+            sync_recver.setsockopt(zmq.RCVHWM, 2)
+            sync_recver.setsockopt(zmq.RCVBUF, 0)
             sync_recver.connect(f"tcp://{other_hosts[ind]}:{port+ind}")
             raw = sync_recver.recv()
+            time.sleep(1)
             sync_recver.close()
         
         for ind in range(1,len(other_hosts[1:])+1):
             sync_sender.send(b'1')
+
         # sync_sender.close()
         
-        print("ALL SYNC")
+    print("ALL SYNC")
     receiver = context.socket(zmq.PULL)
+    receiver.setsockopt(zmq.RCVHWM, 2)
+    receiver.setsockopt(zmq.RCVBUF, 0)
+    ack_receiver = context.socket(zmq.PULL)
+    ack_receiver.setsockopt(zmq.RCVHWM, 2)
+    ack_receiver.setsockopt(zmq.RCVBUF, 0)
+    
+    if rank!=world-1:
+        ack_receiver.connect(f"tcp://{other_hosts[rank+1]}:{port+1000+1}")
+    else:
+        ack_receiver.close()
+        del ack_receiver
+
     if rank!=0:
         receiver.connect(f"tcp://{other_hosts[rank-1]}:{port-1}")
     else:
         receiver.close()
         del receiver
-    if rank==world-1:
-        sync_sender.close()
-        del sync_sender 
+        
     gc.collect()
     s_ts = datetime.now()
     net_times=[]
@@ -188,8 +217,11 @@ if __name__=="__main__":
         send_size = 0
         if rank!=0:
             # for _ in range(batch_num):
-            raw_buffer = receiver.recv()
-            np_arr = np.frombuffer(raw_buffer, dtype=str_to_dtype(numpy_shape[1]))
+            raw_val = receiver.recv()
+            # recv_size = len(raw_val)
+            # raw_buffer = zlib.decompress(raw_val)
+            np_arr = np.frombuffer(raw_val, dtype=str_to_dtype(numpy_shape[1]))
+            ack_sender.send(b'1')
             recv_size = np_arr.nbytes
             #filter data by iters and or cores
             flattened_length = np.prod(numpy_shape[0])
@@ -204,35 +236,37 @@ if __name__=="__main__":
         outputs=[]
         with mp.Pool(processes=cores) as p:
             for i in  p.starmap(silly_test, [(core, path, rank, iters, shape_dict, np_array,) for core in range(cores)]):
-                outputs.append(i)
+                outputs=i
             del np_array
             # del np_arr
 
-            np_output=np.stack(outputs)
-        # for core in range(cores):
-        #     p = mp.Process(target=silly_test, args=(ort_sess, core, path, rank, iters, shape_dict, [np_array], ))
-        #     p.start()
-        #     procs.append(p)
-
-        # for p in procs:
-        #     p.join()
-        
+        # np_output=outputs       
         send_st = time.perf_counter()
         if rank!=world-1:
-            send_size = np_output.nbytes
-            sync_sender.send(np_output)
-            del np_output
+            send_size = outputs.nbytes
+            # op=zlib.compress(np_output.tobytes(), level=6)
+            # send_size = len(op)
+            sync_sender.send(outputs)
+            del outputs
+            ack_receiver.recv()
         send_et = time.perf_counter()
 
         net_times.append([round(recv_et-recv_st,3), round(send_et-send_st,3), recv_size, send_size ])
         gc.collect()
     e_ts = datetime.now()
+    
     if rank!=world-1:
-        sync_sender.close()
-        del sync_sender
+        ack_receiver.close()
+        del ack_receiver
+    
     if rank!=0:
         receiver.close()
         del receiver
+    
+    sync_sender.close()
+    del sync_sender
+    ack_sender.close()
+    del ack_sender
     gc.collect()
     print(f"{e_ts} Sync done -> model run start", flush=True)
     print(f"net_times: {net_times}")
@@ -243,3 +277,4 @@ if __name__=="__main__":
 # Print Result
 # predicted, actual = classes[outputs[0][0].argmax(0)], classes[y]
 # print(f'Predicted: "{predicted}", Actual: "{actual}"')
+
