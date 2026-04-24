@@ -40,6 +40,56 @@ class Args:
     image: str = "./bear.jpeg"
     custom: list[int] = None
 
+class TTMWrapper(nn.Module):
+    """
+    Wrap TinyTimeMixer so the rest of the script can treat it like a normal nn.Module
+    that takes one tensor input and returns one tensor output.
+
+    Input shape:
+        [batch, context_length, num_channels]
+
+    Output shape:
+        [batch, prediction_length, num_channels]
+    """
+
+    def __init__(
+        self,
+        context_length: int = 512,
+        prediction_length: int = 96,
+        num_channels: int = 4,
+        freq: str = "h",
+    ):
+        super().__init__()
+
+        # official package import path that worked in your environment
+        from tsfm_public.toolkit.get_model import get_model
+
+        self.inner = get_model(
+            model_path="ibm-granite/granite-timeseries-ttm-r2",
+            model_name="ttm",
+            context_length=context_length,
+            prediction_length=prediction_length,
+            freq=freq,
+        )
+
+        self.context_length = context_length
+        self.prediction_length = prediction_length
+        self.num_channels = num_channels
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: [B, context_length, num_channels]
+        observed_mask = torch.ones_like(x, dtype=x.dtype, device=x.device)
+
+        outputs = self.inner(
+            past_values=x,
+            observed_mask=observed_mask,
+            future_values=None,
+        )
+
+        return outputs.prediction_outputs
+
+
+
 def onnx_stuff(fname):
     import onnx
     from onnxsim import simplify
@@ -236,8 +286,10 @@ def stat_generator(pipe, world, model_type, model_split_type, example_input):
             # torch.save(exp, f"{app_dir}/split_{rank}.pt2")
             # torch.save(exp.module().state_dict(), f"{app_dir}/split_{rank}_state.pt2")
         else:
-            if type(output)!=type(example_input):
+            if type(output)!=type(torch.empty(1)):
                 exp = torch.export.export(temp, output)
+                # exp = torch.export.export(temp, (outputs[:len(outputs)-1], outputs[-1], ))
+                # exp = torch.export.export(temp, (torch.(output),))
                 #TODO make first output actually *output!
                 temp = executorch_stuff(f"{app_dir}/exe_split_{rank}.pte", rank, exp.module(), output, output, star=True)
                 # torch.export.save(exp, f"{app_dir}/split_{rank}.pt2")
@@ -250,7 +302,7 @@ def stat_generator(pipe, world, model_type, model_split_type, example_input):
                 n_output = temp.forward(output)
         
         if rank not in stage_shapes:
-            if type(output)!=type(example_input):
+            if type(output)!=type(torch.empty(1)):
                 stage_info = [len(output), [list(o.shape) for o in output]]
                 new_output = torch.cat([o.flatten() for o in output]).flatten()
                 stage_info = [tuple(new_output.shape), f"{new_output.dtype}"] + stage_info
@@ -262,7 +314,7 @@ def stat_generator(pipe, world, model_type, model_split_type, example_input):
         if rank not in flop_stages:
             flop_counter = FlopCounterMode(display=False, depth=None)
             with flop_counter:
-                if type(output) != type(example_input):
+                if type(output) != type(torch.empty(1)):
                     temp.forward(*output)
                 else:
                     temp.forward(output)
@@ -274,7 +326,7 @@ def stat_generator(pipe, world, model_type, model_split_type, example_input):
             # flop_stages[rank] = flop_counter.get_total_flops()
     #additional rank for final output
     if world not in stage_shapes:
-        if type(output)!=type(example_input):
+        if type(output)!=type(torch.empty(1)):
             stage_info = [len(output), [list(o.shape) for o in output]]
             new_output = torch.cat([o.flatten() for o in output]).flatten()
             stage_info = [tuple(new_output.shape), f"{new_output.dtype}"] + stage_info
@@ -288,7 +340,7 @@ def stat_generator(pipe, world, model_type, model_split_type, example_input):
     f=open(stage_file, "w")
     f.write(f"{stage_shapes}\n")
 
-def model_splitter(model, model_type, split_type, world, batch_size, specific_chunks=[]):
+def model_splitter(model, model_type, split_type, world, batch_size, specific_chunks=[], spec_example_input=None):
     split_model = {}
     if split_type=="modules":
         split_model = {k:v for k,v in model.named_modules() if k!='' and k not in model.named_children()}
@@ -356,7 +408,7 @@ def model_splitter(model, model_type, split_type, world, batch_size, specific_ch
     if split_names[-1] not in split_spec:
         split_spec[split_names[-1]] = SplitPoint.END
 
-    example_input = torch.randn(1*batch_size, 3, 224, 224)
+    example_input = torch.randn(1*batch_size, 3, 224, 224) if spec_example_input==None else spec_example_input
     print(split_spec)
     # exit()
     pipe = pipeline(model, mb_args=(example_input,), split_spec=split_spec )
@@ -413,7 +465,7 @@ if __name__ == "__main__":
     # pre_model(example_input)
     # pretrained_model = convert_pt2e(pre_model)
     # quantize_(pretrained_model, Int8DynamicActivationInt8WeightConfig())
-    
+    example_input=None
     if args.model_type=="mbv3_small":
         weights = MobileNet_V3_Small_Weights.DEFAULT
         pretrained_model = mobilenet_v3_small(weights=weights).eval()
@@ -436,7 +488,47 @@ if __name__ == "__main__":
         weights=ViT_B_16_Weights
         pretrained_model = vit_b_16(weights=weights).eval()
     
+    # context_length: int = 512
+    # prediction_length: int = 96
+    # num_channels: int = 4
+    # freq: str = "h"
+    elif args.model_type=="tsfm":
+        # pretrained_model = TTMWrapper().eval()
+        # from transformers import PatchTSTModel
+        from transformers import TimeSeriesTransformerModel
+        from huggingface_hub import hf_hub_download
+        file = hf_hub_download(repo_id="hf-internal-testing/tourism-monthly-batch", filename="train-batch.pt", repo_type="dataset")
+        batch = torch.load(file)
+        example_input = batch['past_values']
+        print(batch["past_values"].shape)
+        # example_input = torch.randn(
+        #     64,
+        #     512,
+        #     7
+        # )
+        # exit()
+        # pretrained_model = PatchTSTModel.from_pretrained("namctin/patchtst_etth1_pretrain").eval()
+        pretrained_model = TimeSeriesTransformerModel.from_pretrained("huggingface/time-series-transformer-tourism-monthly")
+        # print(model.config)
+        # exit()
+        # from tsfm_public.toolkit.get_model import get_model
+
+        # pretrained_model = get_model(
+        #     model_path="ibm-granite/granite-timeseries-ttm-r2",
+        #     model_name="ttm",
+        #     context_length=512,
+        #     prediction_length=96,
+        #     freq="h",
+        # )
+
+        # example_input = torch.randn(
+        #     1 * args.batch_size,
+        #     512,
+        #     4
+        # )
+
+    
     model_splitter(pretrained_model, args.model_type, 
-    args.model_split_type, args.world, args.batch_size, args.custom if args.custom!=None else [])
+    args.model_split_type, args.world, args.batch_size, args.custom if args.custom!=None else [], spec_example_input=example_input)
 
     
