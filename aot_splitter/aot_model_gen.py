@@ -30,6 +30,7 @@ from torchao.quantization.pt2e.quantize_pt2e import convert_pt2e, prepare_pt2e
 # import torchao.quantization.pt2e.quantizer.arm_inductor_quantizer as aiq
 # from torchao.quantization.pt2e.quantizer.arm_inductor_quantizer import ArmInductorQuantizer 
 from pathlib import Path
+import tcn_library
 
 @dataclass
 class Args:
@@ -39,56 +40,6 @@ class Args:
     model_split_type:str = "children"
     image: str = "./bear.jpeg"
     custom: list[int] = None
-
-class TTMWrapper(nn.Module):
-    """
-    Wrap TinyTimeMixer so the rest of the script can treat it like a normal nn.Module
-    that takes one tensor input and returns one tensor output.
-
-    Input shape:
-        [batch, context_length, num_channels]
-
-    Output shape:
-        [batch, prediction_length, num_channels]
-    """
-
-    def __init__(
-        self,
-        context_length: int = 512,
-        prediction_length: int = 96,
-        num_channels: int = 4,
-        freq: str = "h",
-    ):
-        super().__init__()
-
-        # official package import path that worked in your environment
-        from tsfm_public.toolkit.get_model import get_model
-
-        self.inner = get_model(
-            model_path="ibm-granite/granite-timeseries-ttm-r2",
-            model_name="ttm",
-            context_length=context_length,
-            prediction_length=prediction_length,
-            freq=freq,
-        )
-
-        self.context_length = context_length
-        self.prediction_length = prediction_length
-        self.num_channels = num_channels
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: [B, context_length, num_channels]
-        observed_mask = torch.ones_like(x, dtype=x.dtype, device=x.device)
-
-        outputs = self.inner(
-            past_values=x,
-            observed_mask=observed_mask,
-            future_values=None,
-        )
-
-        return outputs.prediction_outputs
-
-
 
 def onnx_stuff(fname):
     import onnx
@@ -382,15 +333,6 @@ def model_splitter(model, model_type, split_type, world, batch_size, specific_ch
             ascending_keys = list(ascending_sort.keys())
             ascending_sort[ascending_keys[0]]+=diff
             sizes = [ascending_sort[r] for r in range(len(ascending_sort))]
-        
-
-
-        
-
-
-
-
-
 
     split_spec = {}
     split_names = list(split_model.keys())
@@ -412,15 +354,12 @@ def model_splitter(model, model_type, split_type, world, batch_size, specific_ch
     print(split_spec)
     # exit()
     pipe = pipeline(model, mb_args=(example_input,), split_spec=split_spec )
+    # pipeline()
     # print(pipe)
 
     # print(pipe.num_stages)
     print(split_spec, pipe.num_stages)
     print(split_model.keys())
-
-    # exit()
-
-
 
     stat_generator(pipe, world, model_type, split_type, example_input)
 
@@ -492,6 +431,21 @@ if __name__ == "__main__":
     # prediction_length: int = 96
     # num_channels: int = 4
     # freq: str = "h"
+    elif args.model_type=="tcn":
+        pretrained_model = tcn_library.SensorTCN(
+            num_channels=8,
+            hidden_channels=256,
+            levels=8,
+            kernel_size=5,
+            output_channels=8,
+        ).eval()
+
+        example_input = torch.randn(
+            args.batch_size,
+            2048,
+            8,
+        )
+    
     elif args.model_type=="tsfm":
         # pretrained_model = TTMWrapper().eval()
         # from transformers import PatchTSTModel
