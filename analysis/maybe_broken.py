@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional
+
 
 class ModelSplitter:
     def __init__(self, model: nn.Module, input_shape: Tuple[int, ...]):
@@ -34,7 +35,7 @@ class ModelSplitter:
         groups = m.groups
         macs = n * l_out * c_out * (c_in // groups) * k
         return 2.0 * macs
-    
+
     def _linear_flops(self, m: nn.Linear, x: torch.Tensor, y: torch.Tensor) -> float:
         if x.dim() == 2:
             batch = x.shape[0]
@@ -75,7 +76,6 @@ class ModelSplitter:
                 y = out[0] if isinstance(out, (tuple, list)) else out
                 flops = 0.0
 
-                # if isinstance(module, (nn.Conv1d, nn.Conv2d)):
                 if isinstance(module, nn.Conv1d):
                     flops = self._conv1d_flops(module, x, y)
                 elif isinstance(module, nn.Conv2d):
@@ -149,7 +149,33 @@ class ModelSplitter:
 
         return shapes
 
-    def split(self, flop_percentages: List[float]) -> Dict:
+    def _boundary_transfer_bytes(self, shape: Optional[Tuple[int, ...]], dtype=torch.float32) -> float:
+        if shape is None:
+            return 0.0
+        bytes_per_element = torch.tensor([], dtype=dtype).element_size()
+        total_elements = 1
+        for dim in shape:
+            total_elements *= dim
+        return float(total_elements * bytes_per_element)
+
+    def _boundary_cost(
+        self,
+        flops: float,
+        target_flops: float,
+        transfer_bytes: float,
+        alpha: float = 1.0,
+        beta: float = 1e-6,
+    ) -> float:
+        flop_error = abs(flops - target_flops) / max(target_flops, 1e-9)
+        return alpha * flop_error + beta * transfer_bytes
+
+    def split(
+        self,
+        flop_percentages: List[float],
+        lookahead: int = 10,
+        alpha: float = 1.0,
+        beta: float = 1e-6,
+    ) -> Dict:
         if not flop_percentages:
             raise ValueError("flop_percentages cannot be empty")
         total_pct = sum(flop_percentages)
@@ -160,39 +186,54 @@ class ModelSplitter:
         output_shapes = self._collect_output_shapes()
 
         target_flops = [(p / 100.0) * self.total_flops for p in flop_percentages]
-        splits = [[] for _ in flop_percentages]
-        split_flops = [0.0 for _ in flop_percentages]
+        splits = []
+        split_flops = []
 
-        split_idx = 0
-        running_flops = 0.0
+        start_idx = 0
 
-        for name, module, flops in layers:
-            if split_idx < len(flop_percentages) - 1:
-                current_target = target_flops[split_idx]
-                overshoot_if_added = (running_flops + flops) - current_target
-                undershoot_if_skipped = current_target - running_flops
-                if running_flops > 0 and overshoot_if_added > undershoot_if_skipped:
-                    split_idx += 1
-                    running_flops = 0.0
+        for split_idx, target in enumerate(target_flops):
+            if split_idx == len(target_flops) - 1:
+                splits.append(layers[start_idx:])
+                split_flops.append(sum(l[2] for l in layers[start_idx:]))
+                break
 
-            splits[split_idx].append(name)
-            split_flops[split_idx] += flops
-            running_flops += flops
+            best_cost = float("inf")
+            best_cut = start_idx
 
-            if split_idx < len(flop_percentages) - 1 and split_flops[split_idx] >= target_flops[split_idx]:
-                split_idx += 1
-                running_flops = 0.0
+            running_flops = 0.0
+            for i in range(start_idx, len(layers)):
+                running_flops += layers[i][2]
+
+                if running_flops < 0.5 * target:
+                    continue
+                if running_flops > 1.5 * target:
+                    break
+
+                end_limit = min(i + lookahead, len(layers))
+                for j in range(i, end_limit):
+                    candidate_flops = sum(l[2] for l in layers[start_idx : j + 1])
+                    shape = output_shapes.get(layers[j][0])
+                    transfer_bytes = self._boundary_transfer_bytes(shape)
+                    cost = self._boundary_cost(candidate_flops, target, transfer_bytes, alpha=alpha, beta=beta)
+
+                    if cost < best_cost:
+                        best_cost = cost
+                        best_cut = j
+
+            splits.append(layers[start_idx : best_cut + 1])
+            split_flops.append(sum(l[2] for l in layers[start_idx : best_cut + 1]))
+            start_idx = best_cut + 1
 
         cumulative_sum = 0.0
         result = {"total_flops": self.total_flops, "splits": []}
 
-        for i, (target_pct, layer_names) in enumerate(zip(flop_percentages, splits)):
+        for i, (target_pct, layer_group) in enumerate(zip(flop_percentages, splits)):
             layers_info = []
-            for layer_name in layer_names:
+            for layer_name, _, _ in layer_group:
                 layers_info.append({
                     "layer": layer_name,
                     "flops": self.layer_flops.get(layer_name, 0.0),
-                    "output_shape": output_shapes.get(layer_name)
+                    "output_shape": output_shapes.get(layer_name),
                 })
 
             cumulative_sum += split_flops[i]
@@ -205,10 +246,12 @@ class ModelSplitter:
                 "actual_percentage": (split_flops[i] / self.total_flops) * 100 if self.total_flops > 0 else 0.0,
                 "layers": layers_info,
                 "boundary_output_shape": boundary_shape,
+                "boundary_transfer_bytes": self._boundary_transfer_bytes(boundary_shape),
                 "cumulative_flops": cumulative_sum,
             })
 
         return result
+
 
 def print_split_summary(result: Dict):
     print("\n" + "=" * 100)
@@ -216,10 +259,14 @@ def print_split_summary(result: Dict):
     print("=" * 100)
 
     for split in result["splits"]:
-        print(f"\nSplit {split['split_id']}: Target {split['target_percentage']}% "
-              f"(Actual: {split['actual_percentage']:.2f}%)")
+        boundary_mb = split.get("boundary_transfer_bytes", 0.0) / (1024 * 1024)
+        print(
+            f"\nSplit {split['split_id']}: Target {split['target_percentage']}% "
+            f"(Actual: {split['actual_percentage']:.2f}%)"
+        )
         print(f"  FLOPs: {split['actual_flops']:.2e}")
         print(f"  Cumulative FLOPs: {split['cumulative_flops']:.2e}")
+        print(f"  Boundary transfer: {boundary_mb:.4f} MB")
         print(f"  Layers: {len(split['layers'])}")
 
         for layer_info in split["layers"]:
@@ -227,51 +274,25 @@ def print_split_summary(result: Dict):
             print(f"    - {layer_info['layer']}")
             print(f"      FLOPs: {layer_info['flops']:.2e}, Output shape: {output_shape_str}")
 
-def calculate_network_transfer_size(split_output_shape: Tuple[int, ...], dtype=torch.float32) -> float:
-    if split_output_shape is None:
-        return 0.0
-    bytes_per_element = torch.tensor([], dtype=dtype).element_size()
-    total_elements = 1
-    for dim in split_output_shape:
-        total_elements *= dim
-    return total_elements * bytes_per_element
 
 if __name__ == "__main__":
     print("\n" + "=" * 100)
-    print("Network Transfer Size Calculation")
+    print("Network-Aware Model Splitting")
     print("=" * 100)
+
     import tcn_library
+
     model = tcn_library.SensorTCN(
-            num_channels=8,
-            hidden_channels=256,
-            levels=8,
-            kernel_size=5,
-            output_channels=8,
-        ).eval()
+        num_channels=8,
+        hidden_channels=256,
+        levels=8,
+        kernel_size=5,
+        output_channels=8,
+    ).eval()
 
-    example_input = torch.randn(
-        1,
-        2048,
-        8,
-    )
-    # from torchvision.models import vision_transformer
-    # model = vision_transformer.vit_b_16(weights=None)
-    # model.eval()
-    # from torchvision.models import resnet18
-    # print("Testing with ResNet18:")
-    # model = resnet18(weights=None)
-    # model.eval()
+    example_input = torch.randn(1, 2048, 8)
 
-
-    # splitter = ModelSplitter(model, input_shape=(1, 3, 224, 224))
-    splitter = ModelSplitter(model, input_shape=(1,2048,8))
-    result = splitter.split([30, 33, 11, 18, 8])
+    splitter = ModelSplitter(model, input_shape=(1, 2048, 8))
+    #increase alpha for better compute, increase beta for better network
+    result = splitter.split([30, 33, 11, 18, 8], lookahead=10, alpha=50, beta=1e-6)
     print_split_summary(result)
-
-    for split in result["splits"]:
-        shape = split["boundary_output_shape"]
-        transfer_bytes = calculate_network_transfer_size(shape)
-        transfer_mb = transfer_bytes / (1024 * 1024)
-
-        print(f"\nSplit {split['split_id']}:")
-        print(f"  Boundary transfer: {transfer_mb:.4f} MB")
