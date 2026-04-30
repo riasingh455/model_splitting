@@ -1,0 +1,12 @@
+ALL SYNC
+2026-04-29 16:50:35.916829 Sync done -> model run start
+0 0.708 [0.37081728829070926, 0.33740092208608985]
+2026-04-29 16:51:24.871710 Sync done -> model run start
+0 0.701 [0.36381025006994605, 0.33683834224939346]
+2026-04-29 16:52:14.820977 Sync done -> model run start
+0 0.694 [0.3575326232239604, 0.33616596506908536]
+2026-04-29 16:53:03.536948 Sync done -> model run start
+2026-04-29 16:53:51.554108 Sync done -> model run start
+2026-04-29 16:53:58.148517 Sync done -> model run start
+net_times: [[60.096, 5.689, 6422528, 3211264], [42.369, 5.66, 6422528, 3211264], [43.269, 5.662, 6422528, 3211264], [42.033, 5.677, 6422528, 3211264], [41.089, 5.657, 6422528, 3211264]]
+echo 'race4fun' | sudo -S sh -c 'journalctl --since "2026-04-29 16:49:35.361525" --until "2026-04-29 16:53:58.148517" -k -o short-iso '| grep -i -E 'throttle|throttled|thermal|cpufreq|under-voltage|voltage'
