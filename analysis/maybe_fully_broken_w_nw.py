@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 from dataclasses import dataclass
 from typing import List, Tuple, Dict, Optional, Any
-
+from torch.profiler import profile, ProfilerActivity, record_function
 
 @dataclass
 class SplitArtifact:
@@ -22,6 +22,7 @@ class SplitArtifact:
     network_flops: Dict[str, float]
     split_score: float
     chosen_cut: int
+    # mem_usage: float
 
 
 class ExportableSplit(nn.Module):
@@ -200,6 +201,8 @@ class FlopAwarePipelineSplitterBase:
         w_flop: float = 1.0,
         w_net: float = 0.0,
         w_comm: float = 0.0,
+        export: bool = False,
+        profiler: bool = False,
     ) -> Dict[str, Any]:
         os.makedirs(out_dir, exist_ok=True)
 
@@ -224,10 +227,55 @@ class FlopAwarePipelineSplitterBase:
             module = ExportableSplit([(n, m) for n, m, _ in group]).eval().to(self.device)
             inp_shape = tuple(x.shape)
             exported_path = os.path.join(out_dir, f"split_{split_id}.pt2")
-
+            # mem_usage = -1
             with torch.no_grad():
                 ep = torch.export.export(module, (x,))
-                torch.export.save(ep, exported_path)
+                
+                # Path.unlink(f"{out_dir}/split_{split_id}.onnx")
+
+                if export:
+                    torch.export.save(ep, exported_path)
+                    onnx_ep = torch.onnx.export(module, (x,) )
+                    from onnxsim import simplify
+                    import onnx
+                    from onnxruntime.quantization import quantize_dynamic, QuantType
+                    from pathlib import Path
+                    # onnx.save(onnx_ep,f"{out_dir}/split_{split_id}.onnx" )
+                    # onnx_model = onnx.load(f"{out_dir}/split_{split_id}.onnx")
+                    onnx_sim, check = simplify(onnx_ep.model_proto)
+                    if check:
+                        onnx.save(onnx_sim, f"{out_dir}/split_{split_id}.simp.onnx")
+                    quantize_dynamic(f"{out_dir}/split_{split_id}.simp.onnx", 
+                    f"{out_dir}/split_{split_id}_quant.onnx", weight_type=QuantType.QUInt8)
+                    Path.unlink(f"{out_dir}/split_{split_id}.simp.onnx")
+
+                # if profiler:
+                #     # onnx_mod = onnx.load(f"{out_dir}/split_{split_id}_quant.onnx")
+                #     # import onnxruntime as ort
+                #     # import numpy as np
+                #     # onnx_mod = ort.InferenceSession(f"{out_dir}/split_{split_id}_quant.onnx")
+                #     # input_map = {i.name: x.numpy() for ind, i in enumerate(onnx_mod.get_inputs())}
+                #     # print(input_map)
+                #     from executorch.backends.xnnpack.quantizer.xnnpack_quantizer import XNNPACKQuantizer, get_symmetric_quantization_config
+                #     from torchao.quantization.pt2e.quantize_pt2e import convert_pt2e, prepare_pt2e
+                #     qparams = get_symmetric_quantization_config(is_per_channel=True)
+                #     quantizer = XNNPACKQuantizer()
+                #     quantizer.set_global(qparams)
+                #     prepared_model = prepare_pt2e(ep.module(), quantizer)
+                #     prepared_model(x)
+                #     quantized_model = convert_pt2e(prepared_model)
+                #     q_ep = torch.export.export(quantized_model, (x,))
+                #     ep = torch.export.export(q_ep.module(), (x,))
+                #     y = ep.module()(x)
+
+                #     with profile(
+                #         activities=[ProfilerActivity.CPU], profile_memory=True, record_shapes=True
+                #     ) as prof:
+                #         y = ep.module()(x)
+                        # y = onnx_mod.run(None, input_feed=input_map)
+                    # mem_usage = prof.key_averages()
+                    # print(mem_usage)
+                # else:
                 y = ep.module()(x)
 
             flops = sum(f for _, _, f in group)
@@ -247,6 +295,7 @@ class FlopAwarePipelineSplitterBase:
                     network_flops=self._layer_group_flops(group),
                     split_score=split_score,
                     chosen_cut=cut,
+                    # mem_usage=mem_usage#(mem_usage/8 - self._bytes_from_shape(tuple(y.shape)))  if mem_usage!=-1 else mem_usage
                 )
             )
 
@@ -259,9 +308,9 @@ class FlopAwarePipelineSplitterBase:
             "weights": {"w_flop": w_flop, "w_net": w_net, "w_comm": w_comm},
             "splits": [a.__dict__ for a in artifacts],
         }
-
-        with open(os.path.join(out_dir, meta_name), "w") as f:
-            json.dump(result, f, indent=2, default=str)
+        if export:
+            with open(os.path.join(out_dir, meta_name), "w") as f:
+                json.dump(result, f, indent=2, default=str)
 
         return result
 
@@ -476,22 +525,22 @@ class FlopAwareTCNPipelineSplitter(FlopAwarePipelineSplitterBase):
 if __name__=="__main__":
     from torchvision.models import vision_transformer
 
-    model = vision_transformer.vit_b_16(weights=None).eval()
-    splitter = FlopAwareViTPipelineSplitter(model, input_shape=(1, 3, 224, 224))
+    # model = vision_transformer.vit_b_16(weights=None).eval()
+    # splitter = FlopAwareViTPipelineSplitter(model, input_shape=(1, 3, 224, 224))
 
-    # Tradeoff intuition
-    #     If w_flop is high, the splitter prioritizes balanced compute across stages.
-    #     If w_net is high, it prefers clean architectural boundaries even if FLOPs are a little off.
-    #     If w_comm is high, it tries to minimize transfer size between splits, which matters when the boundary activation is large.
-    result = splitter.split_by_flops_pipeline(
-        flop_percentages=[30, 33, 11, 18, 8],
-        lookahead=5,
-        out_dir="./vit_splits",
-        meta_name="vit_meta.json",
-        w_flop=1.0,
-        w_net=0.5,
-        w_comm=0.1,
-    )
+    # # Tradeoff intuition
+    # #     If w_flop is high, the splitter prioritizes balanced compute across stages. -> keeps percentage close to provided percentage
+    # #     If w_net is high, it prefers clean architectural boundaries even if FLOPs are a little off. -> always ignored actually lmao
+    # #     If w_comm is high, it tries to minimize transfer size between splits, which matters when the boundary activation is large. -> keeps communication borders big
+    # result = splitter.split_by_flops_pipeline(
+    #     flop_percentages=[30, 33, 11, 18, 8],
+    #     lookahead=5,
+    #     out_dir="./vit_splits",
+    #     meta_name="vit_meta.json",
+    #     w_flop=1.0,
+    #     w_net=0.5,
+    #     w_comm=0.1,
+    # )
 
 #reconstruction
 # meta = json.load(open("./vit_splits/vit_meta.json"))
@@ -519,19 +568,21 @@ if __name__=="__main__":
         w_flop=1.0,
         w_net=0.5,
         w_comm=0.1,
+        profiler=True,
+        # export=True
     )
 
-    from torchvision.models import resnet18
+    # from torchvision.models import resnet18
 
-    model = resnet18(weights=None).eval()
-    splitter = FlopAwareResNet18PipelineSplitter(model, input_shape=(1, 3, 224, 224))
+    # model = resnet18(weights=None).eval()
+    # splitter = FlopAwareResNet18PipelineSplitter(model, input_shape=(1, 3, 224, 224))
 
-    result = splitter.split_by_flops_pipeline(
-        flop_percentages=[20, 30, 30, 20],
-        lookahead=5,
-        out_dir="./resnet_splits",
-        meta_name="resnet_meta.json",
-        w_flop=1.0,
-        w_net=0.5,
-        w_comm=0.1,
-    )
+    # result = splitter.split_by_flops_pipeline(
+    #     flop_percentages=[20, 30, 30, 20],
+    #     lookahead=5,
+    #     out_dir="./resnet_splits",
+    #     meta_name="resnet_meta.json",
+    #     w_flop=1.0,
+    #     w_net=0.5,
+    #     w_comm=0.1,
+    # )
