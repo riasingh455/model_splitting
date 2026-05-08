@@ -234,7 +234,7 @@ class FlopAwarePipelineSplitterBase:
                 # Path.unlink(f"{out_dir}/split_{split_id}.onnx")
 
                 if export:
-                    torch.export.save(ep, exported_path)
+                    # torch.export.save(ep, exported_path)
                     onnx_ep = torch.onnx.export(module, (x,) )
                     from onnxsim import simplify
                     import onnx
