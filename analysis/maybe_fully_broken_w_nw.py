@@ -204,7 +204,6 @@ class FlopAwarePipelineSplitterBase:
         export: bool = False,
         profiler: bool = False,
     ) -> Dict[str, Any]:
-        os.makedirs(out_dir, exist_ok=True)
 
         if abs(sum(flop_percentages) - 100.0) > 1e-6:
             raise ValueError("FLOP percentages must sum to 100")
@@ -229,26 +228,46 @@ class FlopAwarePipelineSplitterBase:
             exported_path = os.path.join(out_dir, f"split_{split_id}.pt2")
             # mem_usage = -1
             with torch.no_grad():
-                ep = torch.export.export(module, (x,))
+                ep = torch.export.export(module, (x,), strict=True,
+                dynamic_shapes=({0: torch.export.Dim("batch", min=1, max=1024)},)
+                    # dynamic_shapes={"x": {0: torch.export.Dim("batch", min=1, max=2**32)}}#, "output": {0: torch.export.Dim("batch", min=1, max=1024)}}
+                )
                 
                 # Path.unlink(f"{out_dir}/split_{split_id}.onnx")
 
                 if export:
+                    os.makedirs(out_dir, exist_ok=True)
                     # torch.export.save(ep, exported_path)
-                    onnx_ep = torch.onnx.export(module, (x,) )
+
+                    # onnx_ep = torch.onnx.export(module, (x,), 
+                    onnx_ep = torch.onnx.export(ep, (x,), 
+                    input_names=["input"],
+                    output_names=["output"],
+                    # optimize=False if "vit" in out_dir else True,
+                    # dynamic_shapes=({0: torch.export.Dim("batch", min=1, max=1024)},)#, "y": {0: torch.export.Dim("batch", min=1, max=1024)}}
+                    dynamic_axes={"input": {0: "batch"}, "output": {0: "batch"}} #if "vit" not in out_dir else {"input": {0: torch.export.Dim("batch", min=1, max=1024)}, "output": {0: torch.export.Dim("batch", min=1, max=1024)}}
+                    )
+
                     from onnxsim import simplify
                     import onnx
                     from onnxruntime.quantization import quantize_dynamic, QuantType
                     from pathlib import Path
                     # onnx.save(onnx_ep,f"{out_dir}/split_{split_id}.onnx" )
                     # onnx_model = onnx.load(f"{out_dir}/split_{split_id}.onnx")
-                    onnx_sim, check = simplify(onnx_ep.model_proto)
-                    if check:
-                        onnx.save(onnx_sim, f"{out_dir}/split_{split_id}.simp.onnx")
+                    # if "vit" not in out_dir:
+                    # print(onnx_ep.model_proto)
+                    onnx_sim, check = simplify(onnx_ep.model_proto)#, perform_optimization=False if "vit" in out_dir else True, 
+                    # skip_shape_inference=True if "vit" in out_dir else False)
+                        # if check:
+                    onnx.save(onnx_sim, f"{out_dir}/split_{split_id}.simp.onnx")
+                    # else:
+                    #     onnx.save(onnx_ep.model_proto, f"{out_dir}/split_{split_id}.simp.onnx")
                     quantize_dynamic(f"{out_dir}/split_{split_id}.simp.onnx", 
                     f"{out_dir}/split_{split_id}_quant.onnx", weight_type=QuantType.QUInt8)
                     Path.unlink(f"{out_dir}/split_{split_id}.simp.onnx")
-
+                        # quantize_dynamic(f"{out_dir}/split_{split_id}.onnx", 
+                        # f"{out_dir}/split_{split_id}_quant.onnx", weight_type=QuantType.QUInt8)
+                        # # Path.unlink(f"{out_dir}/split_{split_id}.simp.onnx")
                 # if profiler:
                 #     # onnx_mod = onnx.load(f"{out_dir}/split_{split_id}_quant.onnx")
                 #     # import onnxruntime as ort
@@ -346,8 +365,45 @@ class ViTHead(nn.Module):
 
     def forward(self, x):
         x = self.ln(x)
-        x = x[:, 0]
+        # x = x[:, 0]
+        if x.dim() == 3:
+            x = x[:, 0]
+        elif x.dim() != 2:
+            raise RuntimeError(f"Unexpected ViTHead input shape: {x.shape}")
         return self.heads(x)
+
+# class ViTStem(nn.Module):
+#     def __init__(self, model):
+#         super().__init__()
+#         self.conv_proj = model.conv_proj
+#         self.class_token = model.class_token
+#         self.pos_embedding = model.encoder.pos_embedding
+#         self.dropout = model.encoder.dropout
+
+#     def forward(self, x):
+#         x = self.conv_proj(x)
+#         if x.dim() != 4:
+#             raise RuntimeError(f"Expected conv_proj output to be 4D, got {x.shape}")
+#         x = x.flatten(2).transpose(1, 2)  # [B, E, H, W] -> [B, N, E]
+#         b = x.shape[0]
+#         cls = self.class_token.expand(b, -1, -1)
+#         x = torch.cat([cls, x], dim=1)
+#         x = x + self.pos_embedding
+#         return self.dropout(x)
+
+
+# class ViTHead(nn.Module):
+#     def __init__(self, model):
+#         super().__init__()
+#         self.ln = model.encoder.ln
+#         self.heads = model.heads
+
+#     def forward(self, x):
+#         if x.dim() != 3:
+#             raise RuntimeError(f"Expected token tensor [B, S, E], got {x.shape}")
+#         x = self.ln(x)
+#         x = x[:, 0]
+#         return self.heads(x)
 
 
 class FlopAwareViTPipelineSplitter(FlopAwarePipelineSplitterBase):
@@ -394,6 +450,16 @@ class FlopAwareViTPipelineSplitter(FlopAwarePipelineSplitterBase):
         name = group[-1][0]
         return 0.0 if name == "head" or name.startswith("encoder_layers_") or name == "stem" else 1.0
 
+    # def _get_ordered_layers(self):
+    #     layers = [("stem", ViTStem(self.model), self.layer_flops.get("conv_proj", 0.0))]
+    #     for i, blk in enumerate(self.model.encoder.layers):
+    #         name = f"encoder_layer_{i}"
+    #         prefix = f"encoder.layers.encoder_layer_{i}"
+    #         flops = sum(v for k, v in self.layer_flops.items() if k.startswith(prefix))
+    #         layers.append((name, blk, flops))
+    #     layers.append(("head", ViTHead(self.model), self.layer_flops.get("heads", 0.0)))
+    #     return layers
+    
     def _get_ordered_layers(self):
         layers = [("stem", ViTStem(self.model), self.layer_flops.get("conv_proj", 0.0))]
         for i, blk in enumerate(self.model.encoder.layers):
@@ -526,7 +592,8 @@ if __name__=="__main__":
     from torchvision.models import vision_transformer
 
     # model = vision_transformer.vit_b_16(weights=None).eval()
-    # splitter = FlopAwareViTPipelineSplitter(model, input_shape=(1, 3, 224, 224))
+    # # splitter = FlopAwareViTPipelineSplitter(model, input_shape=(1, 3, 224, 224))
+    # splitter = FlopAwareViTPipelineSplitter(model, input_shape=(2, 3, 224, 224))
 
     # # Tradeoff intuition
     # #     If w_flop is high, the splitter prioritizes balanced compute across stages. -> keeps percentage close to provided percentage
@@ -536,10 +603,11 @@ if __name__=="__main__":
     #     flop_percentages=[30, 33, 11, 18, 8],
     #     lookahead=5,
     #     out_dir="./vit_splits",
-    #     meta_name="vit_meta.json",
+    #     meta_name="meta.json",
     #     w_flop=1.0,
     #     w_net=0.5,
     #     w_comm=0.1,
+    #     export=True
     # )
 
 #reconstruction
@@ -549,40 +617,41 @@ if __name__=="__main__":
 #     ep = torch.export.load(part["exported_path"])
 #     modules.append(ep.module())
 
-    import tcn_library as tcn
-    model = tcn.SensorTCN(
-    num_channels=8,
-    hidden_channels=256,
-    levels=8,
-    kernel_size=5,
-    output_channels=8,
-    ).eval()
+    # import tcn_library as tcn
+    # model = tcn.SensorTCN(
+    # num_channels=8,
+    # hidden_channels=256,
+    # levels=8,
+    # kernel_size=5,
+    # output_channels=8,
+    # ).eval()
 
-    splitter = FlopAwareTCNPipelineSplitter(model, input_shape=(1, 2048, 8))
-
-    result = splitter.split_by_flops_pipeline(
-        flop_percentages=[30, 33, 11, 18, 8],
-        lookahead=3,
-        out_dir="./tcn_splits",
-        meta_name="tcn_meta.json",
-        w_flop=1.0,
-        w_net=0.5,
-        w_comm=0.1,
-        profiler=True,
-        # export=True
-    )
-
-    # from torchvision.models import resnet18
-
-    # model = resnet18(weights=None).eval()
-    # splitter = FlopAwareResNet18PipelineSplitter(model, input_shape=(1, 3, 224, 224))
+    # splitter = FlopAwareTCNPipelineSplitter(model, input_shape=(1, 2048, 8))
 
     # result = splitter.split_by_flops_pipeline(
-    #     flop_percentages=[20, 30, 30, 20],
-    #     lookahead=5,
-    #     out_dir="./resnet_splits",
-    #     meta_name="resnet_meta.json",
+    #     flop_percentages=[30, 33, 11, 18, 8],
+    #     lookahead=3,
+    #     out_dir="./tcn_splits",
+    #     meta_name="meta.json",
     #     w_flop=1.0,
     #     w_net=0.5,
     #     w_comm=0.1,
+    #     profiler=True,
+    #     export=True
     # )
+
+    from torchvision.models import resnet18
+
+    model = resnet18(weights=None).eval()
+    splitter = FlopAwareResNet18PipelineSplitter(model, input_shape=(2, 3, 224, 224))
+
+    result = splitter.split_by_flops_pipeline(
+        flop_percentages=[20, 30, 30, 20],
+        lookahead=5,
+        out_dir="./resnet_splits",
+        meta_name="resnet_meta.json",
+        w_flop=1.0,
+        w_net=0.5,
+        w_comm=0.1,
+        export=True
+    )

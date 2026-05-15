@@ -38,27 +38,27 @@ node_select () {
 model_type=$1
 model_split=$2
 node_prefix=$3
-# cores=$4
+core=$4
 path_prefix="/home/animesh/test_model_split/"
 
-# if [[ -z $model_type ]] || [[ -z $model_split ]] || [[ -z $node_prefix ]] || [[ -z $cores ]]
-if [[ -z $model_type ]] || [[ -z $model_split ]] || [[ -z $node_prefix ]] 
+if [[ -z $model_type ]] || [[ -z $model_split ]] || [[ -z $node_prefix ]] || [[ -z $core ]]
+#if [[ -z $model_type ]] || [[ -z $model_split ]] || [[ -z $node_prefix ]] 
 then
-	# echo "Missing arguments, expected: ./script.sh <model_type> (resnet18, mbv3_small, eb0) <model_split> (children, modules) <node_prefix> (bramble-x-y) <number of cores> (int, max 4)" && exit
-	echo "Missing arguments, expected: ./script.sh <model_type> (resnet18, mbv3_small, eb0) <model_split> (children, modules) <node_prefix> (bramble-x-y)" && exit
+	echo "Missing arguments, expected: ./script.sh <model_type> (resnet18, mbv3_small, eb0) <model_split> (children, modules) <node_prefix> (bramble-x-y) <number of cores> (int, max 4)" && exit
+	#echo "Missing arguments, expected: ./script.sh <model_type> (resnet18, mbv3_small, eb0) <model_split> (children, modules) <node_prefix> (bramble-x-y)" && exit
 fi
 
 
 conc_val=$(sinfo -N | grep "idle" | grep -v "idle\*" | grep "${node_prefix}" | awk '{print$1}' | wc -l)
 
-for repeat in {1..10}
+for repeat in {1..5}
 #for repeat in 0
 do
     # nodes=( $(node_select) )
     nodes=( $(sinfo -N | grep "idle" | grep -v "idle\*" | grep "${node_prefix}" | awk '{print$1}') )
     # for fake_world in 5 10 15
     # for fake_world in 15
-    for fake_world in 5 2
+    for fake_world in 5 3
     do
         for (( fake_rank=0;fake_rank<$fake_world;fake_rank++ ))
         # for fake_rank in 4 13
@@ -67,7 +67,7 @@ do
                 fake_rank_idx=$(( $fake_world-1 ))
                 # #fake_rank=${highest_flop_rank[$fake_rank_idx]}
                 # fake_rank=${highest_mem_rank[$fake_rank_idx]}
-                path_dst="${path_prefix}/logs/subcluster_exploration/${node_prefix}/${model_type}_${model_split}_onnx/all_dev/${repeat}/"
+                path_dst="${path_prefix}/logs/${core}_subcluster_exploration/${node_prefix}/${model_type}_${model_split}_onnx/all_dev/${repeat}/"
                 mkdir -p ${path_dst}
 		for wait_flag in 1 0
 		do
@@ -77,16 +77,16 @@ do
 			if [[ $wait_flag -eq 1 ]]
 			then
 				dt=$(date -d '+1 seconds' +%s)
-				path_dst="${path_prefix}/logs/subcluster_exploration/${node_prefix}/${model_type}_${model_split}_onnx/per_dev/${repeat}/"
+				path_dst="${path_prefix}/logs/${core}_subcluster_exploration/${node_prefix}/${model_type}_${model_split}_onnx/per_dev/${repeat}/"
 				mkdir -p ${path_dst}
 		
 			else
-                path_dst="${path_prefix}/logs/subcluster_exploration/${node_prefix}/${model_type}_${model_split}_onnx/all_dev/${repeat}/"
+                path_dst="${path_prefix}/logs/${core}_subcluster_exploration/${node_prefix}/${model_type}_${model_split}_onnx/all_dev/${repeat}/"
 			fi
 
                 	for (( n=0;n<${#nodes[@]};n++ ))
                 	do
-                    		ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no animesh@${nodes[$n]} "pkill -9 temp_speed; pkill -9 model_rank; pkill -9 python3; echo 'race4fun' | sudo -S sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches';"
+                    		timeout 2m ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no animesh@${nodes[$n]} "pkill -9 temp_speed; pkill -9 model_rank; pkill -9 subcluster; pkill -9 python3; echo 'race4fun' | sudo -S sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches';"
                     		# timeout 10m ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no animesh@${nodes[$n]} "pushd $path_prefix; node_prefix=$node_prefix world=$conc_val rank=$n master=${nodes[0]} model_type=$model_type model_split=$model_split bnum=$bnum ./roofline_pi_script_no_slurm_no_temp.sh &" &
                     		# command="python3 single_runner.py --custom --cores ${cores} --rank ${n} --world ${conc_val} --ip ${nodes[0]} --port 8123 --warmup 1 --batch-size 4 --batch-num 1 --iters 10 --model-type ${model_type} --model-split-type ${model_split}"
                     		# onnxtest.py 10 ./vit_modules_3_1_custom 0 4 ${dt}
@@ -94,20 +94,21 @@ do
 				# hcommand="mac_ver=0 log_path=${path_dst} ./temp_speed_reader.sh"
                 #     		full_hcommand="pushd ${path_prefix}/aot_splitter;${hcommand} &"
                     		
-				command="python3 onnxtest.py 10 ./${model_type}_${model_split}_${fake_world}_1_custom ${fake_rank} 4 ${dt}"
+				#command="python3 onnxtest.py 10 ./${model_type}_${model_split}_${fake_world}_1_custom ${fake_rank} 4 ${dt}"
+				command="python3 onnxtest_w_json.py 10 ./${model_type}_splits_${fake_world}_1 ${fake_rank} ${core} ${dt}"
                     		# command="${command} --fake_rank ${fake_rank} --fake_world ${fake_world}"
                     		timeout 10m ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no animesh@${nodes[$n]} "pushd $path_prefix/aot_splitter; source /home/animesh/model_splitting/pi-torch/bin/activate; ${command} > ${path_dst}/speed_chronos${nodes[$n]}_${fake_world}_${fake_rank}.log &" &
                     		wait_pid=$!
-				ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no animesh@${nodes[$n]} "${full_hcommand}" &
-                    		kill_pid=$!
+				#ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no animesh@${nodes[$n]} "${full_hcommand}" &
+                    		#kill_pid=$!
 				if [[ $wait_flag -eq 1 ]]
                     		then
                     		     wait $wait_pid
-				     kill -9 $kill_pid
+				     #kill -9 $kill_pid
 				     #continue
                     		fi
                     		waiters+=($wait_pid)
-                    		killers+=($kill_pid)
+                    		#killers+=($kill_pid)
                 	done
                 	echo "Selected ${nodes[@]} ${world}"
 			if [[ $wait_flag -eq 0 ]]
@@ -117,13 +118,13 @@ do
 			#cleanup
                 	for (( n=0;n<${#nodes[@]};n++ ))
                 	do
-				if [[ $wait_flag -eq 0 ]]
-				then
-					ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no animesh@${nodes[$n]} "kill -9 ${killers[$n]};"
-				fi
-                    		ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no animesh@${nodes[$n]} "pkill -9 temp_speed; pkill -9 model_rank; pkill -9 python3;"
+				#if [[ $wait_flag -eq 0 ]]
+				#then
+				#	ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no animesh@${nodes[$n]} "kill -9 ${killers[$n]};"
+				#fi
+                    		timeout 2m ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no animesh@${nodes[$n]} "pkill -9 temp_speed; pkill -9 model_rank; pkill -9 subcluster; pkill -9 python3;"
                     		# $(tail -n 1 ${path_dst}/speed_chronos${nodes[$n]}_${fake_rank}.log) > ${path_dst}/speed_journal${nodes[$n]}_${fake_rank}.log
-                    		ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no animesh@${nodes[$n]} "echo 'race4fun' | sudo -S sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches';"
+                    		timeout 2m ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no animesh@${nodes[$n]} "echo 'race4fun' | sudo -S sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches';"
                 	done
 		done
         done
