@@ -1,0 +1,137 @@
+{
+  "architecture": "efficientnet_b0",
+  "total_flops": 1609476408.0,
+  "weights": {
+    "w_flop": 1.0,
+    "w_net": 0.5,
+    "w_comm": 0.1
+  },
+  "splits": [
+    {
+      "split_id": 0,
+      "target_percentage": 20,
+      "actual_flops": 338198308.0,
+      "actual_percentage": 21.01293975599548,
+      "input_shape": [
+        2,
+        3,
+        224,
+        224
+      ],
+      "output_shape": [
+        2,
+        24,
+        56,
+        56
+      ],
+      "module_names": [
+        "stem",
+        "features_1",
+        "features_2"
+      ],
+      "exported_path": "./efficientnet_b0_splits/split_0.pt2",
+      "cumulative_flops": 338198308.0,
+      "boundary_transfer_bytes": 602112.0,
+      "network_flops": {
+        "stem": 47366144.0,
+        "features_1": 45762576.0,
+        "features_2": 245069588.0
+      },
+      "split_score": 0.05064698779977387,
+      "chosen_cut": 2
+    },
+    {
+      "split_id": 1,
+      "target_percentage": 30,
+      "actual_flops": 342380548.0,
+      "actual_percentage": 21.27279072238504,
+      "input_shape": [
+        2,
+        24,
+        56,
+        56
+      ],
+      "output_shape": [
+        2,
+        80,
+        14,
+        14
+      ],
+      "module_names": [
+        "features_3",
+        "features_4"
+      ],
+      "exported_path": "./efficientnet_b0_splits/split_1.pt2",
+      "cumulative_flops": 680578856.0,
+      "boundary_transfer_bytes": 125440.0,
+      "network_flops": {
+        "features_3": 161668128.0,
+        "features_4": 180712420.0
+      },
+      "split_score": 0.29090697592049863,
+      "chosen_cut": 4
+    },
+    {
+      "split_id": 2,
+      "target_percentage": 30,
+      "actual_flops": 352086680.0,
+      "actual_percentage": 21.875852187079715,
+      "input_shape": [
+        2,
+        80,
+        14,
+        14
+      ],
+      "output_shape": [
+        2,
+        112,
+        14,
+        14
+      ],
+      "module_names": [
+        "features_5"
+      ],
+      "exported_path": "./efficientnet_b0_splits/split_2.pt2",
+      "cumulative_flops": 1032665536.0,
+      "boundary_transfer_bytes": 175616.0,
+      "network_flops": {
+        "features_5": 352086680.0
+      },
+      "split_score": 0.2708049270973429,
+      "chosen_cut": 5
+    },
+    {
+      "split_id": 3,
+      "target_percentage": 20,
+      "actual_flops": 576810872.0,
+      "actual_percentage": 35.83841733453977,
+      "input_shape": [
+        2,
+        112,
+        14,
+        14
+      ],
+      "output_shape": [
+        2,
+        1000
+      ],
+      "module_names": [
+        "features_6",
+        "features_7",
+        "final_conv",
+        "head"
+      ],
+      "exported_path": "./efficientnet_b0_splits/split_3.pt2",
+      "cumulative_flops": 1609476408.0,
+      "boundary_transfer_bytes": 8000.0,
+      "network_flops": {
+        "features_6": 371447576.0,
+        "features_7": 119334496.0,
+        "final_conv": 80908800.0,
+        "head": 5120000.0
+      },
+      "split_score": 0.0,
+      "chosen_cut": 9
+    }
+  ]
+}
