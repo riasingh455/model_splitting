@@ -7,6 +7,10 @@ from dataclasses import dataclass
 from typing import List, Tuple, Dict, Optional, Any
 from torch.profiler import profile, ProfilerActivity, record_function
 
+# Ordered layer tuple format used by all splitters:
+# (name, module, flops, boundary_transfer_bytes_after_this_layer)
+OrderedLayer = Tuple[str, nn.Module, float, float]
+
 @dataclass
 class SplitArtifact:
     split_id: int
@@ -145,7 +149,28 @@ class FlopAwarePipelineSplitterBase:
             total *= d
         return float(total * 4)
 
-    def _network_penalty(self, candidate_idx: int, start_idx: int, group: List[Tuple[str, nn.Module, float]]) -> float:
+    def _add_boundary_bytes_to_layers(self, layers: List[Tuple[str, nn.Module, float]]) -> List[OrderedLayer]:
+        """
+        Given architecture-specific ordered layers of (name, module, flops),
+        run one forward sweep and return (name, module, flops, boundary_bytes).
+
+        boundary_bytes is the tensor transfer size immediately after that layer/stage,
+        so split scoring can use it without recomputing candidate outputs.
+        """
+        annotated_layers: List[OrderedLayer] = []
+        x = self._dummy.clone()
+
+        with torch.no_grad():
+            for name, module, flops in layers:
+                module = module.eval().to(self.device)
+                y = module(x)
+                boundary_bytes = self._bytes_from_shape(tuple(y.shape))
+                annotated_layers.append((name, module, flops, boundary_bytes))
+                x = y.detach()
+
+        return annotated_layers
+
+    def _network_penalty(self, candidate_idx: int, start_idx: int, group: List[OrderedLayer]) -> float:
         return 0.0
 
     def _split_score(
@@ -180,17 +205,17 @@ class FlopAwarePipelineSplitterBase:
             if candidate > 1.5 * target_flops and end > start_idx:
                 break
             group = self.ordered_layers[start_idx:end + 1]
-            boundary_shape = None
+            boundary_bytes = self.ordered_layers[end][3]
             network_pen = self._network_penalty(end, start_idx, group)
-            score = self._split_score(candidate, target_flops, self._bytes_from_shape(boundary_shape), network_pen, w_flop, w_net, w_comm)
+            score = self._split_score(candidate, target_flops, boundary_bytes, network_pen, w_flop, w_net, w_comm)
             if score < best_score:
                 best_score = score
                 best_cut = end
 
         return best_cut, best_score
 
-    def _layer_group_flops(self, group: List[Tuple[str, nn.Module, float]]) -> Dict[str, float]:
-        return {name: float(flops) for name, _, flops in group}
+    def _layer_group_flops(self, group: List[OrderedLayer]) -> Dict[str, float]:
+        return {name: float(flops) for name, _, flops, _ in group}
 
     def split_by_flops_pipeline(
         self,
@@ -223,7 +248,7 @@ class FlopAwarePipelineSplitterBase:
                 cut, split_score = self._find_best_split(start_idx, target, lookahead, w_flop, w_net, w_comm)
                 group = self.ordered_layers[start_idx:cut + 1]
 
-            module = ExportableSplit([(n, m) for n, m, _ in group]).eval().to(self.device)
+            module = ExportableSplit([(n, m) for n, m, _, _ in group]).eval().to(self.device)
             inp_shape = tuple(x.shape)
             exported_path = os.path.join(out_dir, f"split_{split_id}.pt2")
             # mem_usage = -1
@@ -297,7 +322,7 @@ class FlopAwarePipelineSplitterBase:
                 # else:
                 y = ep.module()(x)
 
-            flops = sum(f for _, _, f in group)
+            flops = sum(f for _, _, f, _ in group)
             cumulative += flops
             artifacts.append(
                 SplitArtifact(
@@ -307,7 +332,7 @@ class FlopAwarePipelineSplitterBase:
                     actual_percentage=(flops / self.total_flops) * 100 if self.total_flops > 0 else 0.0,
                     input_shape=inp_shape,
                     output_shape=tuple(y.shape),
-                    module_names=[n for n, _, _ in group],
+                    module_names=[n for n, _, _, _ in group],
                     exported_path=exported_path,
                     cumulative_flops=cumulative,
                     boundary_transfer_bytes=self._bytes_from_shape(tuple(y.shape)),
@@ -446,7 +471,7 @@ class FlopAwareViTPipelineSplitter(FlopAwarePipelineSplitterBase):
 
         return float(sum(layer_flops.values())), layer_flops
 
-    def _network_penalty(self, candidate_idx: int, start_idx: int, group: List[Tuple[str, nn.Module, float]]) -> float:
+    def _network_penalty(self, candidate_idx: int, start_idx: int, group: List[OrderedLayer]) -> float:
         name = group[-1][0]
         return 0.0 if name == "head" or name.startswith("encoder_layers_") or name == "stem" else 1.0
 
@@ -471,7 +496,7 @@ class FlopAwareViTPipelineSplitter(FlopAwarePipelineSplitterBase):
                 flops = sum(v for k, v in self.layer_flops.items() if k.startswith(prefix2))
             layers.append((name, blk, flops))
         layers.append(("head", ViTHead(self.model), self.layer_flops.get("heads", 0.0)))
-        return layers
+        return self._add_boundary_bytes_to_layers(layers)
 
 class ResNet18Stem(nn.Module):
     def __init__(self, model):
@@ -505,12 +530,12 @@ class FlopAwareResNet18PipelineSplitter(FlopAwarePipelineSplitterBase):
     def architecture_name(self) -> str:
         return "resnet18"
 
-    def _network_penalty(self, candidate_idx: int, start_idx: int, group: List[Tuple[str, nn.Module, float]]) -> float:
+    def _network_penalty(self, candidate_idx: int, start_idx: int, group: List[OrderedLayer]) -> float:
         name = group[-1][0]
         return 0.0 if name in {"stem", "layer1", "layer2", "layer3", "layer4", "head"} else 1.0
 
     def _get_ordered_layers(self):
-        return [
+        layers = [
             ("stem", ResNet18Stem(self.model),
              self.layer_flops.get("conv1", 0.0) + self.layer_flops.get("bn1", 0.0) + self.layer_flops.get("relu", 0.0) + self.layer_flops.get("maxpool", 0.0)),
             ("layer1", self.model.layer1, sum(v for k, v in self.layer_flops.items() if k.startswith("layer1."))),
@@ -519,6 +544,57 @@ class FlopAwareResNet18PipelineSplitter(FlopAwarePipelineSplitterBase):
             ("layer4", self.model.layer4, sum(v for k, v in self.layer_flops.items() if k.startswith("layer4."))),
             ("head", ResNet18Head(self.model), self.layer_flops.get("avgpool", 0.0) + self.layer_flops.get("fc", 0.0)),
         ]
+        return self._add_boundary_bytes_to_layers(layers)
+
+
+# EDIT: Added EfficientNet-B0 head wrapper so the final split can run avgpool -> flatten -> classifier.
+class EfficientNetB0Head(nn.Module):
+    def __init__(self, model):
+        super().__init__()
+        self.avgpool = model.avgpool
+        self.classifier = model.classifier
+
+    def forward(self, x):
+        x = self.avgpool(x)
+        x = torch.flatten(x, 1)
+        return self.classifier(x)
+
+
+# EDIT: Added EfficientNet-B0 splitter using torchvision EfficientNet's features blocks.
+class FlopAwareEfficientNetB0PipelineSplitter(FlopAwarePipelineSplitterBase):
+    def architecture_name(self) -> str:
+        return "efficientnet_b0"
+
+    def _network_penalty(self, candidate_idx: int, start_idx: int, group: List[OrderedLayer]) -> float:
+        name = group[-1][0]
+        return 0.0 if name in {"stem", "final_conv", "head"} or name.startswith("features_") else 1.0
+
+    def _get_ordered_layers(self):
+        layers = [
+            ("stem", self.model.features[0], sum(v for k, v in self.layer_flops.items() if k.startswith("features.0.")))
+        ]
+
+        for i in range(1, len(self.model.features) - 1):
+            layers.append((
+                f"features_{i}",
+                self.model.features[i],
+                sum(v for k, v in self.layer_flops.items() if k.startswith(f"features.{i}."))
+            ))
+
+        last_idx = len(self.model.features) - 1
+        layers.append((
+            "final_conv",
+            self.model.features[last_idx],
+            sum(v for k, v in self.layer_flops.items() if k.startswith(f"features.{last_idx}."))
+        ))
+
+        layers.append((
+            "head",
+            EfficientNetB0Head(self.model),
+            self.layer_flops.get("avgpool", 0.0) + sum(v for k, v in self.layer_flops.items() if k.startswith("classifier."))
+        ))
+
+        return self._add_boundary_bytes_to_layers(layers)
 
 class TCNStem(nn.Module):
     def forward(self, x):
@@ -576,7 +652,7 @@ class FlopAwareTCNPipelineSplitter(FlopAwarePipelineSplitterBase):
 
         return float(sum(layer_flops.values())), layer_flops
 
-    def _network_penalty(self, candidate_idx: int, start_idx: int, group: List[Tuple[str, nn.Module, float]]) -> float:
+    def _network_penalty(self, candidate_idx: int, start_idx: int, group: List[OrderedLayer]) -> float:
         name = group[-1][0]
         return 0.0 if name in {"stem", "head"} or name.startswith("network_") else 1.0
 
@@ -586,72 +662,90 @@ class FlopAwareTCNPipelineSplitter(FlopAwarePipelineSplitterBase):
             flops = sum(v for k, v in self.layer_flops.items() if k.startswith(f"network.{i}."))
             layers.append((f"network_{i}", TCNBlockWrapper(blk), flops))
         layers.append(("head", TCNHead(self.model.output_proj), self.layer_flops.get("output_proj", 0.0)))
-        return layers
+        return self._add_boundary_bytes_to_layers(layers)
 
-if __name__=="__main__":
-    from torchvision.models import vision_transformer
+# if __name__=="__main__":
+#     pass
+#     # from torchvision.models import vision_transformer
 
-    # model = vision_transformer.vit_b_16(weights=None).eval()
-    # # splitter = FlopAwareViTPipelineSplitter(model, input_shape=(1, 3, 224, 224))
-    # splitter = FlopAwareViTPipelineSplitter(model, input_shape=(2, 3, 224, 224))
+#     # model = vision_transformer.vit_b_16(weights=None).eval()
+#     # # splitter = FlopAwareViTPipelineSplitter(model, input_shape=(1, 3, 224, 224))
+#     # splitter = FlopAwareViTPipelineSplitter(model, input_shape=(2, 3, 224, 224))
 
-    # # Tradeoff intuition
-    # #     If w_flop is high, the splitter prioritizes balanced compute across stages. -> keeps percentage close to provided percentage
-    # #     If w_net is high, it prefers clean architectural boundaries even if FLOPs are a little off. -> always ignored actually lmao
-    # #     If w_comm is high, it tries to minimize transfer size between splits, which matters when the boundary activation is large. -> keeps communication borders big
-    # result = splitter.split_by_flops_pipeline(
-    #     flop_percentages=[30, 33, 11, 18, 8],
-    #     lookahead=5,
-    #     out_dir="./vit_splits",
-    #     meta_name="meta.json",
-    #     w_flop=1.0,
-    #     w_net=0.5,
-    #     w_comm=0.1,
-    #     export=True
-    # )
+#     # # Tradeoff intuition
+#     # #     If w_flop is high, the splitter prioritizes balanced compute across stages. -> keeps percentage close to provided percentage
+#     # #     If w_net is high, it prefers clean architectural boundaries even if FLOPs are a little off. -> always ignored actually lmao
+#     # #     If w_comm is high, it tries to minimize transfer size between splits, which matters when the boundary activation is large. -> keeps communication borders big
+#     # result = splitter.split_by_flops_pipeline(
+#     #     flop_percentages=[30, 33, 11, 18, 8],
+#     #     lookahead=5,
+#     #     out_dir="./vit_splits",
+#     #     meta_name="meta.json",
+#     #     w_flop=1.0,
+#     #     w_net=0.5,
+#     #     w_comm=0.1,
+#     #     export=True
+#     # )
 
-#reconstruction
-# meta = json.load(open("./vit_splits/vit_meta.json"))
-# modules = []
-# for part in meta["splits"]:
-#     ep = torch.export.load(part["exported_path"])
-#     modules.append(ep.module())
+# #reconstruction
+# # meta = json.load(open("./vit_splits/vit_meta.json"))
+# # modules = []
+# # for part in meta["splits"]:
+# #     ep = torch.export.load(part["exported_path"])
+# #     modules.append(ep.module())
 
-    # import tcn_library as tcn
-    # model = tcn.SensorTCN(
-    # num_channels=8,
-    # hidden_channels=256,
-    # levels=8,
-    # kernel_size=5,
-    # output_channels=8,
-    # ).eval()
+#     # import tcn as tcn
+#     # model = tcn.SensorTCN(
+#     # num_channels=8,
+#     # hidden_channels=256,
+#     # levels=8,
+#     # kernel_size=5,
+#     # output_channels=8,
+#     # ).eval()
 
-    # splitter = FlopAwareTCNPipelineSplitter(model, input_shape=(1, 2048, 8))
+#     # splitter = FlopAwareTCNPipelineSplitter(model, input_shape=(1, 2048, 8))
 
-    # result = splitter.split_by_flops_pipeline(
-    #     flop_percentages=[30, 33, 11, 18, 8],
-    #     lookahead=3,
-    #     out_dir="./tcn_splits",
-    #     meta_name="meta.json",
-    #     w_flop=1.0,
-    #     w_net=0.5,
-    #     w_comm=0.1,
-    #     profiler=True,
-    #     export=True
-    # )
+#     # result = splitter.split_by_flops_pipeline(
+#     #     flop_percentages=[30, 33, 11, 18, 8],
+#     #     lookahead=3,
+#     #     out_dir="./tcn_splits",
+#     #     meta_name="meta.json",
+#     #     w_flop=1.0,
+#     #     w_net=0.5,
+#     #     w_comm=0.1,
+#     #     profiler=True,
+#     #     export=True
+#     # )
 
-    from torchvision.models import resnet18
+#     # from torchvision.models import resnet18
+    
+#     # model = resnet18(weights=None).eval()
+#     # splitter = FlopAwareResNet18PipelineSplitter(model, input_shape=(2, 3, 224, 224))
+    
+#     # result = splitter.split_by_flops_pipeline(
+#     #     flop_percentages=[20, 30, 30, 20],
+#     #     lookahead=5,
+#     #     out_dir="./resnet_splits",
+#     #     meta_name="resnet_meta.json",
+#     #     w_flop=1.0,
+#     #     w_net=0.5,
+#     #     w_comm=0.1,
+#     #     export=True
+#     # )
 
-    model = resnet18(weights=None).eval()
-    splitter = FlopAwareResNet18PipelineSplitter(model, input_shape=(2, 3, 224, 224))
+#     # EDIT: Added EfficientNet-B0 run block.
+#     # from torchvision.models import efficientnet_b0
 
-    result = splitter.split_by_flops_pipeline(
-        flop_percentages=[20, 30, 30, 20],
-        lookahead=5,
-        out_dir="./resnet_splits",
-        meta_name="resnet_meta.json",
-        w_flop=1.0,
-        w_net=0.5,
-        w_comm=0.1,
-        export=True
-    )
+#     # model = efficientnet_b0(weights=None).eval()
+#     # splitter = FlopAwareEfficientNetB0PipelineSplitter(model, input_shape=(2, 3, 224, 224))
+
+#     # result = splitter.split_by_flops_pipeline(
+#     #     flop_percentages=[20, 30, 30, 20],
+#     #     lookahead=5,
+#     #     out_dir="./efficientnet_b0_splits",
+#     #     meta_name="efficientnet_b0_meta.json",
+#     #     w_flop=0,
+#     #     w_net=0,
+#     #     w_comm=1,
+#     #     export=True
+#     # )

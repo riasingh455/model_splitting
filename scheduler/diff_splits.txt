@@ -1,0 +1,1086 @@
+eff 1 split
+
+
+
+
+eff 2 split
+
+34c34
+<       "exported_path": "./eff_splits_2_2/split_0.pt2",
+---
+>       "exported_path": "./eff_splits_2_1/split_0.pt2",
+69c69
+<       "exported_path": "./eff_splits_2_2/split_1.pt2",
+---
+>       "exported_path": "./eff_splits_2_1/split_1.pt2",
+
+
+
+eff 3 split
+
+33c33
+<       "exported_path": "./eff_splits_3_2/split_0.pt2",
+---
+>       "exported_path": "./eff_splits_3_1/split_0.pt2",
+66c66
+<       "exported_path": "./eff_splits_3_2/split_1.pt2",
+---
+>       "exported_path": "./eff_splits_3_1/split_1.pt2",
+97c97
+<       "exported_path": "./eff_splits_3_2/split_2.pt2",
+---
+>       "exported_path": "./eff_splits_3_1/split_2.pt2",
+
+
+
+eff 4 split
+
+32c32
+<       "exported_path": "./eff_splits_4_2/split_0.pt2",
+---
+>       "exported_path": "./eff_splits_4_1/split_0.pt2",
+64c64
+<       "exported_path": "./eff_splits_4_2/split_1.pt2",
+---
+>       "exported_path": "./eff_splits_4_1/split_1.pt2",
+94c94
+<       "exported_path": "./eff_splits_4_2/split_2.pt2",
+---
+>       "exported_path": "./eff_splits_4_1/split_2.pt2",
+124c124
+<       "exported_path": "./eff_splits_4_2/split_3.pt2",
+---
+>       "exported_path": "./eff_splits_4_1/split_3.pt2",
+
+
+
+eff 5 split
+
+32c32
+<       "exported_path": "./eff_splits_5_2/split_0.pt2",
+---
+>       "exported_path": "./eff_splits_5_1/split_0.pt2",
+64c64
+<       "exported_path": "./eff_splits_5_2/split_1.pt2",
+---
+>       "exported_path": "./eff_splits_5_1/split_1.pt2",
+94c94
+<       "exported_path": "./eff_splits_5_2/split_2.pt2",
+---
+>       "exported_path": "./eff_splits_5_1/split_2.pt2",
+123c123
+<       "exported_path": "./eff_splits_5_2/split_3.pt2",
+---
+>       "exported_path": "./eff_splits_5_1/split_3.pt2",
+152c152
+<       "exported_path": "./eff_splits_5_2/split_4.pt2",
+---
+>       "exported_path": "./eff_splits_5_1/split_4.pt2",
+
+
+
+eff 6 split
+
+32c32
+<       "exported_path": "./eff_splits_6_2/split_0.pt2",
+---
+>       "exported_path": "./eff_splits_6_1/split_0.pt2",
+64c64
+<       "exported_path": "./eff_splits_6_2/split_1.pt2",
+---
+>       "exported_path": "./eff_splits_6_1/split_1.pt2",
+94c94
+<       "exported_path": "./eff_splits_6_2/split_2.pt2",
+---
+>       "exported_path": "./eff_splits_6_1/split_2.pt2",
+123c123
+<       "exported_path": "./eff_splits_6_2/split_3.pt2",
+---
+>       "exported_path": "./eff_splits_6_1/split_3.pt2",
+152c152
+<       "exported_path": "./eff_splits_6_2/split_4.pt2",
+---
+>       "exported_path": "./eff_splits_6_1/split_4.pt2",
+177c177
+<       "exported_path": "./eff_splits_6_2/split_5.pt2",
+---
+>       "exported_path": "./eff_splits_6_1/split_5.pt2",
+
+
+
+resnet18 1 split
+
+
+
+
+resnet18 2 split
+
+5c5
+<     "w_flop": 0,
+---
+>     "w_flop": 1,
+7c7
+<     "w_comm": 1
+---
+>     "w_comm": 0
+32c32
+<       "exported_path": "./resnet18_splits_2_2/split_0.pt2",
+---
+>       "exported_path": "./resnet18_splits_2_1/split_0.pt2",
+40c40
+<       "split_score": 0.765625,
+---
+>       "split_score": 0.09504877567746185,
+63c63
+<       "exported_path": "./resnet18_splits_2_2/split_1.pt2",
+---
+>       "exported_path": "./resnet18_splits_2_1/split_1.pt2",
+
+
+
+resnet18 3 split
+
+5c5
+<     "w_flop": 0,
+---
+>     "w_flop": 1,
+7c7
+<     "w_comm": 1
+---
+>     "w_comm": 0
+13,14c13,14
+<       "actual_flops": 480083968.0,
+<       "actual_percentage": 6.5952177243944226,
+---
+>       "actual_flops": 2336997376.0,
+>       "actual_percentage": 32.104814039652446,
+28c28,29
+<         "stem"
+---
+>         "stem",
+>         "layer1"
+30,31c31,32
+<       "exported_path": "./resnet18_splits_3_2/split_0.pt2",
+<       "cumulative_flops": 480083968.0,
+---
+>       "exported_path": "./resnet18_splits_3_1/split_0.pt2",
+>       "cumulative_flops": 2336997376.0,
+34c35,36
+<         "stem": 480083968.0
+---
+>         "stem": 480083968.0,
+>         "layer1": 1856913408.0
+36,37c38,39
+<       "split_score": 1.53125,
+<       "chosen_cut": 0
+---
+>       "split_score": 0.03685557881042666,
+>       "chosen_cut": 1
+42,43c44,45
+<       "actual_flops": 3505496064.0,
+<       "actual_percentage": 48.15722105947867,
+---
+>       "actual_flops": 1648582656.0,
+>       "actual_percentage": 22.647624744220646,
+57d58
+<         "layer1",
+60c61
+<       "exported_path": "./resnet18_splits_3_2/split_1.pt2",
+---
+>       "exported_path": "./resnet18_splits_3_1/split_1.pt2",
+64d64
+<         "layer1": 1856913408.0,
+67c67
+<       "split_score": 0.765625,
+---
+>       "split_score": 0.3205712576733807,
+90c90
+<       "exported_path": "./resnet18_splits_3_2/split_2.pt2",
+---
+>       "exported_path": "./resnet18_splits_3_1/split_2.pt2",
+
+
+
+resnet18 4 split
+
+5c5
+<     "w_flop": 0,
+---
+>     "w_flop": 1,
+7c7
+<     "w_comm": 1
+---
+>     "w_comm": 0
+13,14c13,14
+<       "actual_flops": 480083968.0,
+<       "actual_percentage": 6.5952177243944226,
+---
+>       "actual_flops": 2336997376.0,
+>       "actual_percentage": 32.104814039652446,
+28,56c28
+<         "stem"
+<       ],
+<       "exported_path": "./resnet18_splits_4_2/split_0.pt2",
+<       "cumulative_flops": 480083968.0,
+<       "boundary_transfer_bytes": 1605632.0,
+<       "network_flops": {
+<         "stem": 480083968.0
+<       },
+<       "split_score": 1.53125,
+<       "chosen_cut": 0
+<     },
+<     {
+<       "split_id": 1,
+<       "target_percentage": 25.0,
+<       "actual_flops": 1856913408.0,
+<       "actual_percentage": 25.509596315258026,
+<       "input_shape": [
+<         2,
+<         64,
+<         56,
+<         56
+<       ],
+<       "output_shape": [
+<         2,
+<         64,
+<         56,
+<         56
+<       ],
+<       "module_names": [
+---
+>         "stem",
+59c31
+<       "exported_path": "./resnet18_splits_4_2/split_1.pt2",
+---
+>       "exported_path": "./resnet18_splits_4_1/split_0.pt2",
+62a35
+>         "stem": 480083968.0,
+65c38
+<       "split_score": 1.53125,
+---
+>       "split_score": 0.28419256158609785,
+69c42
+<       "split_id": 2,
+---
+>       "split_id": 1,
+88c61
+<       "exported_path": "./resnet18_splits_4_2/split_2.pt2",
+---
+>       "exported_path": "./resnet18_splits_4_1/split_1.pt2",
+94c67
+<       "split_score": 0.765625,
+---
+>       "split_score": 0.09409501023117417,
+98c71
+<       "split_id": 3,
+---
+>       "split_id": 2,
+100,101c73,74
+<       "actual_flops": 3293693952.0,
+<       "actual_percentage": 45.24756121612691,
+---
+>       "actual_flops": 1646374912.0,
+>       "actual_percentage": 22.617295565722177,
+109a83,111
+>         256,
+>         14,
+>         14
+>       ],
+>       "module_names": [
+>         "layer3"
+>       ],
+>       "exported_path": "./resnet18_splits_4_1/split_2.pt2",
+>       "cumulative_flops": 5631954944.0,
+>       "boundary_transfer_bytes": 401408.0,
+>       "network_flops": {
+>         "layer3": 1646374912.0
+>       },
+>       "split_score": 0.09530817737111295,
+>       "chosen_cut": 3
+>     },
+>     {
+>       "split_id": 3,
+>       "target_percentage": 25.0,
+>       "actual_flops": 1647319040.0,
+>       "actual_percentage": 22.63026565040473,
+>       "input_shape": [
+>         2,
+>         256,
+>         14,
+>         14
+>       ],
+>       "output_shape": [
+>         2,
+113d114
+<         "layer3",
+117c118
+<       "exported_path": "./resnet18_splits_4_2/split_3.pt2",
+---
+>       "exported_path": "./resnet18_splits_4_1/split_3.pt2",
+121d121
+<         "layer3": 1646374912.0,
+
+
+
+resnet18 5 split
+
+5c5
+<     "w_flop": 0,
+---
+>     "w_flop": 1,
+7c7
+<     "w_comm": 1
+---
+>     "w_comm": 0
+30c30
+<       "exported_path": "./resnet18_splits_5_2/split_0.pt2",
+---
+>       "exported_path": "./resnet18_splits_5_1/split_0.pt2",
+36c36
+<       "split_score": 1.53125,
+---
+>       "split_score": 0.6702391137802789,
+59c59
+<       "exported_path": "./resnet18_splits_5_2/split_1.pt2",
+---
+>       "exported_path": "./resnet18_splits_5_1/split_1.pt2",
+65c65
+<       "split_score": 1.53125,
+---
+>       "split_score": 0.27547981576290104,
+88c88
+<       "exported_path": "./resnet18_splits_5_2/split_2.pt2",
+---
+>       "exported_path": "./resnet18_splits_5_1/split_2.pt2",
+94c94
+<       "split_score": 0.765625,
+---
+>       "split_score": 0.13238123721103212,
+117c117
+<       "exported_path": "./resnet18_splits_5_2/split_3.pt2",
+---
+>       "exported_path": "./resnet18_splits_5_1/split_3.pt2",
+123c123
+<       "split_score": 0.3828125,
+---
+>       "split_score": 0.13086477828610868,
+145c145
+<       "exported_path": "./resnet18_splits_5_2/split_4.pt2",
+---
+>       "exported_path": "./resnet18_splits_5_1/split_4.pt2",
+
+
+
+resnet18 6 split
+
+5c5
+<     "w_flop": 0,
+---
+>     "w_flop": 1,
+7c7
+<     "w_comm": 1
+---
+>     "w_comm": 0
+30c30
+<       "exported_path": "./resnet18_splits_6_2/split_0.pt2",
+---
+>       "exported_path": "./resnet18_splits_6_1/split_0.pt2",
+36c36
+<       "split_score": 1.53125,
+---
+>       "split_score": 0.6042869365363347,
+59c59
+<       "exported_path": "./resnet18_splits_6_2/split_1.pt2",
+---
+>       "exported_path": "./resnet18_splits_6_1/split_1.pt2",
+65c65
+<       "split_score": 1.53125,
+---
+>       "split_score": 0.5305757789154814,
+88c88
+<       "exported_path": "./resnet18_splits_6_2/split_2.pt2",
+---
+>       "exported_path": "./resnet18_splits_6_1/split_2.pt2",
+94c94
+<       "split_score": 0.765625,
+---
+>       "split_score": 0.35885748465323863,
+117c117
+<       "exported_path": "./resnet18_splits_6_2/split_3.pt2",
+---
+>       "exported_path": "./resnet18_splits_6_1/split_3.pt2",
+123c123
+<       "split_score": 0.3828125,
+---
+>       "split_score": 0.3570377339433305,
+129,130c129,130
+<       "actual_flops": 1647319040.0,
+<       "actual_percentage": 22.63026565040473,
+---
+>       "actual_flops": 1645271040.0,
+>       "actual_percentage": 22.602130976472942,
+139c139,141
+<         1000
+---
+>         512,
+>         7,
+>         7
+142,143c144
+<         "layer4",
+<         "head"
+---
+>         "layer4"
+145,147c146,148
+<       "exported_path": "./resnet18_splits_6_2/split_4.pt2",
+<       "cumulative_flops": 7279273984.0,
+<       "boundary_transfer_bytes": 8000.0,
+---
+>       "exported_path": "./resnet18_splits_6_1/split_4.pt2",
+>       "cumulative_flops": 7277225984.0,
+>       "boundary_transfer_bytes": 200704.0,
+149,150c150
+<         "layer4": 1645271040.0,
+<         "head": 2048000.0
+---
+>         "layer4": 1645271040.0
+152,153c152,153
+<       "split_score": 0.00762939453125,
+<       "chosen_cut": 5
+---
+>       "split_score": 0.3561278585883764,
+>       "chosen_cut": 4
+157,159c157,159
+<       "target_percentage": 16.666666666666668,
+<       "actual_flops": 0,
+<       "actual_percentage": 0.0,
+---
+>       "target_percentage": 16.666666666666654,
+>       "actual_flops": 2048000.0,
+>       "actual_percentage": 0.028134673931789735,
+162c162,164
+<         1000
+---
+>         512,
+>         7,
+>         7
+168,169c170,173
+<       "module_names": [],
+<       "exported_path": "./resnet18_splits_6_2/split_5.pt2",
+---
+>       "module_names": [
+>         "head"
+>       ],
+>       "exported_path": "./resnet18_splits_6_1/split_5.pt2",
+172c176,178
+<       "network_flops": {},
+---
+>       "network_flops": {
+>         "head": 2048000.0
+>       },
+
+
+
+vit 1 split
+
+
+
+
+vit 2 split
+
+5c5
+<     "w_flop": 0,
+---
+>     "w_flop": 1,
+7c7
+<     "w_comm": 1
+---
+>     "w_comm": 0
+13,14c13,14
+<       "actual_flops": 462422016.0,
+<       "actual_percentage": 1.0246606621602692,
+---
+>       "actual_flops": 22793711616.0,
+>       "actual_percentage": 50.50758577537272,
+27c27,31
+<         "stem"
+---
+>         "stem",
+>         "encoder_layers_0",
+>         "encoder_layers_1",
+>         "encoder_layers_2",
+>         "encoder_layers_3"
+29,30c33,34
+<       "exported_path": "./vit_splits_2_2/split_0.pt2",
+<       "cumulative_flops": 462422016.0,
+---
+>       "exported_path": "./vit_splits_2_1/split_0.pt2",
+>       "cumulative_flops": 22793711616.0,
+33c37,41
+<         "stem": 462422016.0
+---
+>         "stem": 462422016.0,
+>         "encoder_layers_0": 3721881600.0,
+>         "encoder_layers_1": 11165644800.0,
+>         "encoder_layers_2": 3721881600.0,
+>         "encoder_layers_3": 3721881600.0
+35,36c43,44
+<       "split_score": 1.154296875,
+<       "chosen_cut": 0
+---
+>       "split_score": 0.010151715507454398,
+>       "chosen_cut": 4
+41,42c49,50
+<       "actual_flops": 52106342400.0,
+<       "actual_percentage": 115.46015859749572,
+---
+>       "actual_flops": 29775052800.0,
+>       "actual_percentage": 65.97723348428327,
+53,56d60
+<         "encoder_layers_0",
+<         "encoder_layers_1",
+<         "encoder_layers_2",
+<         "encoder_layers_3",
+67c71
+<       "exported_path": "./vit_splits_2_2/split_1.pt2",
+---
+>       "exported_path": "./vit_splits_2_1/split_1.pt2",
+71,74d74
+<         "encoder_layers_0": 3721881600.0,
+<         "encoder_layers_1": 11165644800.0,
+<         "encoder_layers_2": 3721881600.0,
+<         "encoder_layers_3": 3721881600.0,
+
+
+
+vit 3 split
+
+5c5
+<     "w_flop": 0,
+---
+>     "w_flop": 1,
+7c7
+<     "w_comm": 1
+---
+>     "w_comm": 0
+13,14c13,14
+<       "actual_flops": 462422016.0,
+<       "actual_percentage": 1.0246606621602692,
+---
+>       "actual_flops": 15349948416.0,
+>       "actual_percentage": 34.0132774043019,
+27c27,29
+<         "stem"
+---
+>         "stem",
+>         "encoder_layers_0",
+>         "encoder_layers_1"
+29,30c31,32
+<       "exported_path": "./vit_splits_3_2/split_0.pt2",
+<       "cumulative_flops": 462422016.0,
+---
+>       "exported_path": "./vit_splits_3_1/split_0.pt2",
+>       "cumulative_flops": 15349948416.0,
+33c35,37
+<         "stem": 462422016.0
+---
+>         "stem": 462422016.0,
+>         "encoder_layers_0": 3721881600.0,
+>         "encoder_layers_1": 11165644800.0
+35,36c39,40
+<       "split_score": 1.154296875,
+<       "chosen_cut": 0
+---
+>       "split_score": 0.02039832212905696,
+>       "chosen_cut": 2
+41,42c45,46
+<       "actual_flops": 3721881600.0,
+<       "actual_percentage": 8.24715418553541,
+---
+>       "actual_flops": 14887526400.0,
+>       "actual_percentage": 32.98861674214164,
+54c58,61
+<         "encoder_layers_0"
+---
+>         "encoder_layers_2",
+>         "encoder_layers_3",
+>         "encoder_layers_4",
+>         "encoder_layers_5"
+56,57c63,64
+<       "exported_path": "./vit_splits_3_2/split_1.pt2",
+<       "cumulative_flops": 4184303616.0,
+---
+>       "exported_path": "./vit_splits_3_1/split_1.pt2",
+>       "cumulative_flops": 30237474816.0,
+60c67,70
+<         "encoder_layers_0": 3721881600.0
+---
+>         "encoder_layers_2": 3721881600.0,
+>         "encoder_layers_3": 3721881600.0,
+>         "encoder_layers_4": 3721881600.0,
+>         "encoder_layers_5": 3721881600.0
+62,63c72,73
+<       "split_score": 1.154296875,
+<       "chosen_cut": 1
+---
+>       "split_score": 0.01034149773575111,
+>       "chosen_cut": 6
+68,69c78,79
+<       "actual_flops": 48384460800.0,
+<       "actual_percentage": 107.21300441196031,
+---
+>       "actual_flops": 22331289600.0,
+>       "actual_percentage": 49.48292511321245,
+80,84d89
+<         "encoder_layers_1",
+<         "encoder_layers_2",
+<         "encoder_layers_3",
+<         "encoder_layers_4",
+<         "encoder_layers_5",
+93c98
+<       "exported_path": "./vit_splits_3_2/split_2.pt2",
+---
+>       "exported_path": "./vit_splits_3_1/split_2.pt2",
+97,101d101
+<         "encoder_layers_1": 11165644800.0,
+<         "encoder_layers_2": 3721881600.0,
+<         "encoder_layers_3": 3721881600.0,
+<         "encoder_layers_4": 3721881600.0,
+<         "encoder_layers_5": 3721881600.0,
+
+
+
+vit 4 split
+
+5c5
+<     "w_flop": 0,
+---
+>     "w_flop": 1,
+7c7
+<     "w_comm": 1
+---
+>     "w_comm": 0
+13,14c13,14
+<       "actual_flops": 462422016.0,
+<       "actual_percentage": 1.0246606621602692,
+---
+>       "actual_flops": 15349948416.0,
+>       "actual_percentage": 34.0132774043019,
+27c27,29
+<         "stem"
+---
+>         "stem",
+>         "encoder_layers_0",
+>         "encoder_layers_1"
+29,30c31,32
+<       "exported_path": "./vit_splits_4_2/split_0.pt2",
+<       "cumulative_flops": 462422016.0,
+---
+>       "exported_path": "./vit_splits_4_1/split_0.pt2",
+>       "cumulative_flops": 15349948416.0,
+33c35,37
+<         "stem": 462422016.0
+---
+>         "stem": 462422016.0,
+>         "encoder_layers_0": 3721881600.0,
+>         "encoder_layers_1": 11165644800.0
+35,36c39,40
+<       "split_score": 1.154296875,
+<       "chosen_cut": 0
+---
+>       "split_score": 0.3605310961720761,
+>       "chosen_cut": 2
+41,42c45,46
+<       "actual_flops": 3721881600.0,
+<       "actual_percentage": 8.24715418553541,
+---
+>       "actual_flops": 11165644800.0,
+>       "actual_percentage": 24.741462556606226,
+54c58,60
+<         "encoder_layers_0"
+---
+>         "encoder_layers_2",
+>         "encoder_layers_3",
+>         "encoder_layers_4"
+56,57c62,63
+<       "exported_path": "./vit_splits_4_2/split_1.pt2",
+<       "cumulative_flops": 4184303616.0,
+---
+>       "exported_path": "./vit_splits_4_1/split_1.pt2",
+>       "cumulative_flops": 26515593216.0,
+60c66,68
+<         "encoder_layers_0": 3721881600.0
+---
+>         "encoder_layers_2": 3721881600.0,
+>         "encoder_layers_3": 3721881600.0,
+>         "encoder_layers_4": 3721881600.0
+62,63c70,71
+<       "split_score": 1.154296875,
+<       "chosen_cut": 1
+---
+>       "split_score": 0.010341497735750983,
+>       "chosen_cut": 5
+81c89,91
+<         "encoder_layers_1"
+---
+>         "encoder_layers_5",
+>         "encoder_layers_6",
+>         "encoder_layers_7"
+83,84c93,94
+<       "exported_path": "./vit_splits_4_2/split_2.pt2",
+<       "cumulative_flops": 15349948416.0,
+---
+>       "exported_path": "./vit_splits_4_1/split_2.pt2",
+>       "cumulative_flops": 37681238016.0,
+87c97,99
+<         "encoder_layers_1": 11165644800.0
+---
+>         "encoder_layers_5": 3721881600.0,
+>         "encoder_layers_6": 3721881600.0,
+>         "encoder_layers_7": 3721881600.0
+89,90c101,102
+<       "split_score": 1.154296875,
+<       "chosen_cut": 2
+---
+>       "split_score": 0.010341497735750983,
+>       "chosen_cut": 8
+95,96c107,108
+<       "actual_flops": 37218816000.0,
+<       "actual_percentage": 82.47154185535408,
+---
+>       "actual_flops": 14887526400.0,
+>       "actual_percentage": 32.98861674214164,
+107,112d118
+<         "encoder_layers_2",
+<         "encoder_layers_3",
+<         "encoder_layers_4",
+<         "encoder_layers_5",
+<         "encoder_layers_6",
+<         "encoder_layers_7",
+119c125
+<       "exported_path": "./vit_splits_4_2/split_3.pt2",
+---
+>       "exported_path": "./vit_splits_4_1/split_3.pt2",
+123,128d128
+<         "encoder_layers_2": 3721881600.0,
+<         "encoder_layers_3": 3721881600.0,
+<         "encoder_layers_4": 3721881600.0,
+<         "encoder_layers_5": 3721881600.0,
+<         "encoder_layers_6": 3721881600.0,
+<         "encoder_layers_7": 3721881600.0,
+
+
+
+vit 5 split
+
+5c5
+<     "w_flop": 0,
+---
+>     "w_flop": 1,
+7c7
+<     "w_comm": 1
+---
+>     "w_comm": 0
+13,14c13,14
+<       "actual_flops": 462422016.0,
+<       "actual_percentage": 1.0246606621602692,
+---
+>       "actual_flops": 4184303616.0,
+>       "actual_percentage": 9.271814847695678,
+27c27,28
+<         "stem"
+---
+>         "stem",
+>         "encoder_layers_0"
+29,30c30,31
+<       "exported_path": "./vit_splits_5_2/split_0.pt2",
+<       "cumulative_flops": 462422016.0,
+---
+>       "exported_path": "./vit_splits_5_1/split_0.pt2",
+>       "cumulative_flops": 4184303616.0,
+33c34,35
+<         "stem": 462422016.0
+---
+>         "stem": 462422016.0,
+>         "encoder_layers_0": 3721881600.0
+35,36c37,38
+<       "split_score": 1.154296875,
+<       "chosen_cut": 0
+---
+>       "split_score": 0.5364092576152162,
+>       "chosen_cut": 1
+41,42c43,44
+<       "actual_flops": 3721881600.0,
+<       "actual_percentage": 8.24715418553541,
+---
+>       "actual_flops": 11165644800.0,
+>       "actual_percentage": 24.741462556606226,
+54c56
+<         "encoder_layers_0"
+---
+>         "encoder_layers_1"
+56,57c58,59
+<       "exported_path": "./vit_splits_5_2/split_1.pt2",
+<       "cumulative_flops": 4184303616.0,
+---
+>       "exported_path": "./vit_splits_5_1/split_1.pt2",
+>       "cumulative_flops": 15349948416.0,
+60c62
+<         "encoder_layers_0": 3721881600.0
+---
+>         "encoder_layers_1": 11165644800.0
+62,63c64,65
+<       "split_score": 1.154296875,
+<       "chosen_cut": 1
+---
+>       "split_score": 0.23707312783031112,
+>       "chosen_cut": 2
+68,69c70,71
+<       "actual_flops": 11165644800.0,
+<       "actual_percentage": 24.741462556606226,
+---
+>       "actual_flops": 7443763200.0,
+>       "actual_percentage": 16.49430837107082,
+81c83,84
+<         "encoder_layers_1"
+---
+>         "encoder_layers_2",
+>         "encoder_layers_3"
+83,84c86,87
+<       "exported_path": "./vit_splits_5_2/split_2.pt2",
+<       "cumulative_flops": 15349948416.0,
+---
+>       "exported_path": "./vit_splits_5_1/split_2.pt2",
+>       "cumulative_flops": 22793711616.0,
+87c90,91
+<         "encoder_layers_1": 11165644800.0
+---
+>         "encoder_layers_2": 3721881600.0,
+>         "encoder_layers_3": 3721881600.0
+89,90c93,94
+<       "split_score": 1.154296875,
+<       "chosen_cut": 2
+---
+>       "split_score": 0.17528458144645925,
+>       "chosen_cut": 4
+95,96c99,100
+<       "actual_flops": 3721881600.0,
+<       "actual_percentage": 8.24715418553541,
+---
+>       "actual_flops": 7443763200.0,
+>       "actual_percentage": 16.49430837107082,
+108c112,113
+<         "encoder_layers_2"
+---
+>         "encoder_layers_4",
+>         "encoder_layers_5"
+110,111c115,116
+<       "exported_path": "./vit_splits_5_2/split_3.pt2",
+<       "cumulative_flops": 19071830016.0,
+---
+>       "exported_path": "./vit_splits_5_1/split_3.pt2",
+>       "cumulative_flops": 30237474816.0,
+114c119,120
+<         "encoder_layers_2": 3721881600.0
+---
+>         "encoder_layers_4": 3721881600.0,
+>         "encoder_layers_5": 3721881600.0
+116,117c122,123
+<       "split_score": 1.154296875,
+<       "chosen_cut": 3
+---
+>       "split_score": 0.17528458144645925,
+>       "chosen_cut": 6
+122,123c128,129
+<       "actual_flops": 33496934400.0,
+<       "actual_percentage": 74.22438766981868,
+---
+>       "actual_flops": 22331289600.0,
+>       "actual_percentage": 49.48292511321245,
+134,136d139
+<         "encoder_layers_3",
+<         "encoder_layers_4",
+<         "encoder_layers_5",
+145c148
+<       "exported_path": "./vit_splits_5_2/split_4.pt2",
+---
+>       "exported_path": "./vit_splits_5_1/split_4.pt2",
+149,151d151
+<         "encoder_layers_3": 3721881600.0,
+<         "encoder_layers_4": 3721881600.0,
+<         "encoder_layers_5": 3721881600.0,
+
+
+
+vit 6 split
+
+5c5
+<     "w_flop": 0,
+---
+>     "w_flop": 1,
+7c7
+<     "w_comm": 1
+---
+>     "w_comm": 0
+13,14c13,14
+<       "actual_flops": 462422016.0,
+<       "actual_percentage": 1.0246606621602692,
+---
+>       "actual_flops": 4184303616.0,
+>       "actual_percentage": 9.271814847695678,
+27c27,28
+<         "stem"
+---
+>         "stem",
+>         "encoder_layers_0"
+29,30c30,31
+<       "exported_path": "./vit_splits_6_2/split_0.pt2",
+<       "cumulative_flops": 462422016.0,
+---
+>       "exported_path": "./vit_splits_6_1/split_0.pt2",
+>       "cumulative_flops": 4184303616.0,
+33c34,35
+<         "stem": 462422016.0
+---
+>         "stem": 462422016.0,
+>         "encoder_layers_0": 3721881600.0
+35,36c37,38
+<       "split_score": 1.154296875,
+<       "chosen_cut": 0
+---
+>       "split_score": 0.44369110913825943,
+>       "chosen_cut": 1
+41,42c43,44
+<       "actual_flops": 3721881600.0,
+<       "actual_percentage": 8.24715418553541,
+---
+>       "actual_flops": 11165644800.0,
+>       "actual_percentage": 24.741462556606226,
+54c56
+<         "encoder_layers_0"
+---
+>         "encoder_layers_1"
+56,57c58,59
+<       "exported_path": "./vit_splits_6_2/split_1.pt2",
+<       "cumulative_flops": 4184303616.0,
+---
+>       "exported_path": "./vit_splits_6_1/split_1.pt2",
+>       "cumulative_flops": 15349948416.0,
+60c62
+<         "encoder_layers_0": 3721881600.0
+---
+>         "encoder_layers_1": 11165644800.0
+62,63c64,65
+<       "split_score": 1.154296875,
+<       "chosen_cut": 1
+---
+>       "split_score": 0.48448775339637334,
+>       "chosen_cut": 2
+68,69c70,71
+<       "actual_flops": 11165644800.0,
+<       "actual_percentage": 24.741462556606226,
+---
+>       "actual_flops": 7443763200.0,
+>       "actual_percentage": 16.49430837107082,
+81c83,84
+<         "encoder_layers_1"
+---
+>         "encoder_layers_2",
+>         "encoder_layers_3"
+83,84c86,87
+<       "exported_path": "./vit_splits_6_2/split_2.pt2",
+<       "cumulative_flops": 15349948416.0,
+---
+>       "exported_path": "./vit_splits_6_1/split_2.pt2",
+>       "cumulative_flops": 22793711616.0,
+87c90,91
+<         "encoder_layers_1": 11165644800.0
+---
+>         "encoder_layers_2": 3721881600.0,
+>         "encoder_layers_3": 3721881600.0
+89,90c93,94
+<       "split_score": 1.154296875,
+<       "chosen_cut": 2
+---
+>       "split_score": 0.01034149773575111,
+>       "chosen_cut": 4
+95,96c99,100
+<       "actual_flops": 3721881600.0,
+<       "actual_percentage": 8.24715418553541,
+---
+>       "actual_flops": 7443763200.0,
+>       "actual_percentage": 16.49430837107082,
+108c112,113
+<         "encoder_layers_2"
+---
+>         "encoder_layers_4",
+>         "encoder_layers_5"
+110,111c115,116
+<       "exported_path": "./vit_splits_6_2/split_3.pt2",
+<       "cumulative_flops": 19071830016.0,
+---
+>       "exported_path": "./vit_splits_6_1/split_3.pt2",
+>       "cumulative_flops": 30237474816.0,
+114c119,120
+<         "encoder_layers_2": 3721881600.0
+---
+>         "encoder_layers_4": 3721881600.0,
+>         "encoder_layers_5": 3721881600.0
+116,117c122,123
+<       "split_score": 1.154296875,
+<       "chosen_cut": 3
+---
+>       "split_score": 0.01034149773575111,
+>       "chosen_cut": 6
+122,123c128,129
+<       "actual_flops": 3721881600.0,
+<       "actual_percentage": 8.24715418553541,
+---
+>       "actual_flops": 7443763200.0,
+>       "actual_percentage": 16.49430837107082,
+135c141,142
+<         "encoder_layers_3"
+---
+>         "encoder_layers_6",
+>         "encoder_layers_7"
+137,138c144,145
+<       "exported_path": "./vit_splits_6_2/split_4.pt2",
+<       "cumulative_flops": 22793711616.0,
+---
+>       "exported_path": "./vit_splits_6_1/split_4.pt2",
+>       "cumulative_flops": 37681238016.0,
+141c148,149
+<         "encoder_layers_3": 3721881600.0
+---
+>         "encoder_layers_6": 3721881600.0,
+>         "encoder_layers_7": 3721881600.0
+143,144c151,152
+<       "split_score": 1.154296875,
+<       "chosen_cut": 4
+---
+>       "split_score": 0.01034149773575111,
+>       "chosen_cut": 8
+148,150c156,158
+<       "target_percentage": 16.666666666666668,
+<       "actual_flops": 29775052800.0,
+<       "actual_percentage": 65.97723348428327,
+---
+>       "target_percentage": 16.666666666666654,
+>       "actual_flops": 14887526400.0,
+>       "actual_percentage": 32.98861674214164,
+161,164d168
+<         "encoder_layers_4",
+<         "encoder_layers_5",
+<         "encoder_layers_6",
+<         "encoder_layers_7",
+171c175
+<       "exported_path": "./vit_splits_6_2/split_5.pt2",
+---
+>       "exported_path": "./vit_splits_6_1/split_5.pt2",
+175,178d178
+<         "encoder_layers_4": 3721881600.0,
+<         "encoder_layers_5": 3721881600.0,
+<         "encoder_layers_6": 3721881600.0,
+<         "encoder_layers_7": 3721881600.0,
+
+
+
