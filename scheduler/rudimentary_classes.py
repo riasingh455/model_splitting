@@ -67,6 +67,24 @@ class ModelSplitWrapper:
             )
             return result
 
+        if model_name=="eff":
+            from torchvision.models import efficientnet_b0
+
+            model = efficientnet_b0(weights=None).eval()
+            splitter = model_splitter.FlopAwareEfficientNetB0PipelineSplitter(model, input_shape=(2, 3, 224, 224))
+
+            result = splitter.split_by_flops_pipeline(
+                flop_percentages=splits,
+                lookahead=5,
+                out_dir="./eff_splits",
+                meta_name="meta.json",
+                w_flop=flop_w,
+                w_net=0,
+                w_comm=comm_w,
+                export=export
+            )
+            return result
+
 @dataclass
 class Job:
     id: str
@@ -76,11 +94,15 @@ class Job:
     input_size: int
     best_rate: float
     tasks: List[Task] = None
+    bn: int = 0
+    bs: int = 0
 
     def even_split(self, num_splits, bs=1, export=False, bw=240):
         splits = [100/num_splits]*num_splits
         result = ModelSplitWrapper.split(splits, self.model, export, flop_w=1, comm_w=0)
         self.tasks=[]
+        self.bn = self.input_size//bs
+        self.bs = bs
 
         for r_ind, r in enumerate(result["splits"]):
             task = Task(f"{self.id}.{r_ind}", self, r["actual_flops"]*bs, 
@@ -92,6 +114,8 @@ class Job:
         splits = [100/num_splits]*num_splits
         result = ModelSplitWrapper.split(splits, self.model, export, flop_w=0, comm_w=1)
         self.tasks=[]
+        self.bn = self.input_size//bs
+        self.bs = bs
 
         for r_ind, r in enumerate(result["splits"]):
             task = task = Task(f"{self.id}.{r_ind}", self, r["actual_flops"]*bs, 
@@ -102,7 +126,9 @@ class Job:
     def custom_split(self, splits, bs=1, export=False, bw=240):
         result = ModelSplitWrapper.split(splits, self.model, export, flop_w=1, comm_w=0)
         self.tasks=[]
-        
+        self.bn = self.input_size//bs
+        self.bs = bs
+
         for r_ind, r in enumerate(result["splits"]):
             task = task = Task(f"{self.id}.{r_ind}", self, r["actual_flops"]*bs, 
             self.best_rate, r["boundary_transfer_bytes"]*bs*10**-6, self.arrival, self.wait, np.inf, 0, None, bw  )
@@ -119,7 +145,7 @@ class Job:
     #also use valid wait time list per batch size, batch num combo
     #long iterations but it's okay, after add to device and update all relevant tasks
     #add a tick_tock function either in Device or Subcluster
-    def cost_function_explorer(self, subcluster:Subcluster, flag="even", custom=None, bw=240, k=5):
+    def cost_function_explorer(self, subcluster:Subcluster, flag="even", custom=None, bw=240, k=5, lag_pri=False):
         assignment_info=[]
         #wait time, splits of tasks, bs, bn per iteration
         for bs in range(1, self.input_size+1):
@@ -140,23 +166,61 @@ class Job:
                     raise Exception("Incorrect options for cost function exploration please ensure all appropriate options filled")
                 if len(self.tasks) <= old_len:
                     break
-                print([str(i) for i in self.tasks], [i.flop for i in self.tasks], len(self.tasks))
+                # print([str(i) for i in self.tasks], [i.flop for i in self.tasks], len(self.tasks))
                 old_len = len(self.tasks)
                 #with the current tasks now in job, figure out best possible throughput 
                 #either through running immediately or running after waiting 
                 #wait time counts for throughput calculation
                 # print(bn)
                 m = subcluster.assign_exploration(tasks=self.tasks, batch_num=int(bn))
+                if len(m)==0:
+                    continue
                 # print(m)
                 # sorted_m = {k: m[k] for k in sorted(list(m.keys()))}
-                sorted_map = {k:round(v,3) for k,v in sorted(m.items(), key=lambda x: x[1]+x[0])}
-
-                best_throughput = round(float(bn*bs / sorted_map[list(sorted_map.keys())[0]]),3)
-                info = {"bs":bs, "bn":int(bn), "splits":splits, "best_throughput": best_throughput, "top_k": {k: v for k,v in list(sorted_map.items())[:k]}}
-                print(info)
+                sorted_m = {}
+                if lag_pri:
+                    #latency sort first
+                    sorted_map = {k:[round(v[0],3), round(v[1],3), round(v[2],3)] for k,v in sorted(m.items(), key=lambda x: x[1][0]+x[0])}
+                    # print(sorted_map)
+                    #top k sort on lag now
+                    sorted_map = {k:[round(v[0],3), round(v[1],3), round(v[2],3)] for k,v in sorted(list(m.items())[:k], key=lambda x: x[1][2])}
+                else:
+                    #top k sort on lag now
+                    sorted_map = {k:[round(v[0],3), round(v[1],3), round(v[2],3)] for k,v in sorted(m.items(), key=lambda x: x[1][2])}
+                    #latency sort first
+                    sorted_map = {k:[round(v[0],3), round(v[1],3), round(v[2],3)] for k,v in sorted(list(m.items())[:k], key=lambda x: x[1][0]+x[0])}
+                    # print(sorted_map)
+                #can change the order based on lag or throughput priority
+                best_throughput = round(float(bn*bs / (sorted_map[list(sorted_map.keys())[0]][0] + list(sorted_map.keys())[0]) ),3)
+                
+                info = {"bs":bs, "bn":int(bn), "splits":splits, "best_throughput": best_throughput, "tf":sorted_map[list(sorted_map.keys())[0]][1],
+                  "wait":list(sorted_map.keys())[0], "best_runtime":sorted_map[list(sorted_map.keys())[0]][0],
+                  "top_k": {k: v for k,v in list(sorted_map.items())[:k]}}
+                
+                # print(info)
                 assignment_info.append(info)
         assignment_info = sorted(assignment_info, key=lambda x: x["best_throughput"], reverse=True)
         return assignment_info
+
+    def assign_subcluster(self, subcluster:Subcluster, assign_info, flag="even", custom=None, bw=240):
+        splits = assign_info["splits"]
+        runtime = assign_info["best_runtime"]
+        bn = assign_info["bn"]
+        bs = assign_info["bs"]
+        wait = assign_info["wait"]
+        tf= assign_info["tf"]
+        if flag=="even":
+            self.even_split(splits, bs=bs, bw=bw)
+        elif flag=="comm":
+            self.comm_split(splits, bs=bs, bw=bw)
+        elif flag=="custom" and custom!=None:
+            self.custom_split(custom, bs=bs, bw=bw)
+        
+        subcluster.assign(tasks=self.tasks, runtime=runtime, wait=wait, cur_tf=tf)
+
+
+        
+
 
 
 @dataclass
@@ -168,12 +232,27 @@ class Task:
     output_bytes: int
     task_arrival: int
     task_wait: int
-    task_remaining_time: int #includes both wait+run time
+    run_time: int #includes both wait+run time
     cur_tf: float #hard stopped at 0.5, if greater than 0.5, bring down to 0.5
     device: Device
     peak_bw: float
 
-    
+    @property
+    def task_remaining_time(self):
+        return self.task_wait + self.run_time
+
+    def tick_tock(self, tick):
+        if tick <= self.task_wait:
+            self.task_wait-=tick
+        elif tick > self.task_wait:
+            if self.task_wait!=0:
+                self.task_wait-=tick
+                self.run_time= self.run_time + self.task_wait
+                self.task_wait=0
+                self.run_time = 0 if self.run_time<0 else self.run_time
+            else:
+                self.run_time= (self.run_time - tick) if tick <= self.run_time else 0
+
     def __str__(self):
         return self.id
     
@@ -199,26 +278,34 @@ class Subcluster:
         #make this specific ids instead of just number?
         # cls.name = name
         devices=[]
+        total_devs=ut+t+v
+        sub = cls(name, total_devs, devices)
         for d in range(ut+t+v):
             if d<ut:
-                dev = Device(cls, d, "ut", [])
-                devices.append(dev)
+                dev = Device(sub, d, "ut", [])
+                sub.devices.append(dev)
             elif d<ut+v:
-                dev = Device(cls, d, "v", [])
-                devices.append(dev)
+                dev = Device(sub, d, "v", [])
+                sub.devices.append(dev)
             elif d<ut+v+t:
-                dev = Device(cls, d, "t", [])
-                devices.append(dev)
-        total_devs=ut+t+v
-        return cls(name, total_devs, devices)
+                dev = Device(sub, d, "t", [])
+                sub.devices.append(dev)
+        return sub
     
-    def instance_map(self, wait=0):
+    def tick_tock(self, tick):
+        for d in self.devices:
+            for t in d.tasks:
+                t.tick_tock(tick)
+            d.cleanup()
+
+
+    def instance_map(self, wait=0, w_dev=False):
         if self.devices==None:
             return TypeError("Uninitialized subcluster! Call setup first!")
-        device_map = {"ut":0, "t":0, "v":0}
+        device_map = {"ut":0, "t":0, "v":0} if w_dev==False else {"ut":[], "t":[], "v":[]}
         for d in self.devices:
             if len(d.tasks)==0:
-                device_map[d.dev_type]+=1
+                device_map[d.dev_type]+=1 if w_dev==False else [d]
                 continue
             t = sorted(d.tasks)[-1] 
             #last running task on device, 
@@ -226,7 +313,7 @@ class Subcluster:
             if wait >= t.task_remaining_time:
                 #if last task's remaining time is <= wait time
                 #device free within wait duration
-                device_map[d.dev_type]+=1
+                device_map[d.dev_type]+=1 if w_dev==False else [d]
         return device_map
 
     def interferences(self, wait=0, overlap_duration=0):
@@ -234,7 +321,7 @@ class Subcluster:
             return TypeError("Uninitialized subcluster! Call setup first!")
         interfering_tasks = {}
         for d in self.devices:
-            if d.dev_type=="t":
+            if d.dev_type=="ut":
                 continue
             tasks=sorted(d.tasks)
             for t in tasks:
@@ -243,11 +330,12 @@ class Subcluster:
                     continue
                 if t.task_arrival <= wait+overlap_duration:
                     #if within overlap duration, will interfere
-                    if d.device_name() not in interfering_tasks:
-                        interfering_tasks[d.device_name()] = []
-                    interfering_tasks[d.device_name()].append(t)
+                    # if d.device_name() not in interfering_tasks:
+                    if t.job.id not in interfering_tasks:
+                        interfering_tasks[t.job.id] = t.job
+                    # interfering_tasks[d.device_name()].append(t)
                     
-        return interfering_tasks
+        return list(interfering_tasks.values())
 
     def valid_wait_times(self):
         #return list of minimum wait times required for any change in device compositions
@@ -258,7 +346,8 @@ class Subcluster:
             if len(d.tasks)==0:
                 continue
             t=sorted(d.tasks)[-1]
-            wait_times.append(t.task_remaining_time)
+            if t.task_remaining_time not in wait_times:
+                wait_times.append(t.task_remaining_time)
         return sorted(wait_times)
 
 
@@ -308,12 +397,14 @@ class Subcluster:
         time_map = {}
         # print(wait_times, len(tasks))
         for w in wait_times:
-            if w not in time_map:
-                time_map[w]=np.inf
-            else:
-                continue
+            # print(wait_times)
             device_comp = self.instance_map(w)
+            # print(device_comp)
             if len(tasks) <= sum(device_comp.values()):
+                if w not in time_map:
+                    time_map[w]=np.inf
+                else:
+                    continue
                 #temporarily assign tasks to device types
                 #greedily assign longest flop task to best available device type ut -> v -> t
                 bg_load = self.total_devs - sum(device_comp.values()) #other busy devices
@@ -343,8 +434,9 @@ class Subcluster:
                         # task_mapping[flop_sorted_tasks[u]] = "ut"
                 # for v in range(device_comp[])
                 accumulated_time = 0
+                peak_accumulated_time=0
                 # print(device_comp, task_mapping)
-                print([str(i) for i in rank_to_time_step_map[0]])
+                # print([str(i) for i in rank_to_time_step_map[0]])
                 # print( len(rank_to_time_step_map[0]), batch_num)
                 for time_slice in range(len(rank_to_time_step_map[0])):
 
@@ -360,32 +452,226 @@ class Subcluster:
                     # print(non_fp, task_mapping, time_slice) #, rank_to_time_step_map)
                     # print(fp, task_mapping, rank_to_time_step_map.keys())
                     peak_r = tasks[0].peak_rate
-                    print(max([f*10**-9/peak_r for f in non_fp]))
+                    # print(max([f*10**-9/peak_r for f in non_fp]))
                     # print(self.time_predictor([f*10**-9/2 for f in fp], fp, bg_load), fp)
                     accumulated_time+=max(self.time_predictor([f*10**-9/peak_r for f in fp], fp, temp_bg_load)+[f*10**-9/peak_r for f in non_fp] ) + max(all_fp_nw+[0])
+                    peak_accumulated_time += max([f*10**-9/peak_r for f in non_fp])+max(all_fp_nw+[0])
+                # time_map[w]=[accumulated_time, task_mapping]
 
-                time_map[w]=accumulated_time
-        return {k:v for k,v in sorted(time_map.items(), key=lambda x: x[1])}
+                #impact on other running jobs if any?
+                #collect all tasks that are on volatile/throttled devices
+                jobs_at_wait_time = self.interferences(w, accumulated_time)
+                #get time passed (current arrival+wait time) and subtract flops achieved from tasks
+                time_passed = tasks[0].job.arrival+w
+                
+                #redo interference for tasks with lower flops and bg load from new tasks
+                new_fp_per_job = [ [t.flop-(time_passed*t.flop/t.run_time)*j.bn for t in j.tasks if t.cur_tf < 0.3] for j in jobs_at_wait_time]
+                lags = [0]
+                for fp_entry in new_fp_per_job:
+                    #take the accumulated remaining flops as an approximation 
+                    # -> all of lags is approximations since we don't maintain batch num implementations -> might be a TODO moment tbh
+                    fp = [sum([f for f in fp_entry if f>0])]
+                    temp_bg_load = bg_load - 1 + len(tasks) 
+                    # or -1 to exclude current running task but bg load is being saturated anyway ? 
+                    temp_lag = max(self.time_predictor([f*10**-9/peak_r for f in fp], fp, temp_bg_load)+[0])
+                    lags.append(temp_lag)
+                    # if max(fp_entry) <= 0:
+                        # continue
+                    # fp = [max(fp_entry)] 
+                    #[f for f in fp if f>0]
+                    # temp_bg_load = bg_load - 1 + len(tasks) #worst case assumption of lag
 
+
+
+
+                #get throughput difference as lag and add it to the sorting criteria -> best throughput sort first, top k, then sort by lowest lag
+                # or vice versa depending on what we greedily prioritize!
+
+                time_map[w]=[accumulated_time, (accumulated_time - peak_accumulated_time)/accumulated_time, max(lags)]
+        # return {k:v[0] for k,v in sorted(time_map.items(), key=lambda x: x[1][0])}#, {k:v[1] for k,v in sorted(time_map.items(), key=lambda x: x[1][0])}
+        print(time_map)
+        return {k:v for k,v in sorted(time_map.items(), key=lambda x: x[1][0])}#, {k:v[1] for k,v in sorted(time_map.items(), key=lambda x: x[1][0])}
+
+
+    def assign(self, tasks: List[Task], runtime:float, wait: float, cur_tf:float):
+        #explores assignments for all possible wait times and returns assignment with highest throughput
+        device_comp = self.instance_map(wait, w_dev=True)
+        if len(tasks) <= sum([len(i) for i in device_comp.values()]):
+            jobs_at_wait_time = self.interferences(wait, runtime)
+            #get time passed (current arrival+wait time) and subtract flops achieved from tasks
+            time_passed = tasks[0].job.arrival+wait
+            
+            #redo interference for tasks with lower flops and bg load from new tasks
+            new_fp_per_job = [ [t.flop-(time_passed*t.flop/t.run_time)*j.bn for t in j.tasks if t.cur_tf < 0.3] for j in jobs_at_wait_time]
+            # lags = [0]
+            bg_load = self.total_devs
+            peak_r = tasks[0].peak_rate
+
+            for fp_ind, fp_entry in enumerate(new_fp_per_job):
+                #take the accumulated remaining flops as an approximation 
+                # -> all of lags is approximations since we don't maintain batch num implementations -> might be a TODO moment tbh
+                fp = [sum([f for f in fp_entry if f>0])]
+                temp_bg_load = bg_load - 1 + len(tasks) 
+                # or -1 to exclude current running task but bg load is being saturated anyway ? 
+                temp_lag = max(self.time_predictor([f*10**-9/peak_r for f in fp], fp, temp_bg_load)+[0])
+                cur_tasks = jobs_at_wait_time[fp_ind].tasks
+                for t in cur_tasks:
+                    if t.cur_tf<0.3:
+                        temp =  ((t.run_time+temp_lag) - (t.flop*10**-9/peak_r))/(t.run_time+temp_lag)
+                        temp = 0.3 if temp > 0.3 else temp
+                        # new_cur_tfs.apend(temp)
+                        t.cur_tf = temp
+                        t.run_time = t.run_time+temp_lag
+            
+            #temporarily assign tasks to device types
+            #greedily assign longest flop task to best available device type ut -> v -> t
+            
+            #sort tasks and map them to device types
+            flop_sorted_tasks = sorted(tasks, key = lambda x: x.flop, reverse=True)
+            task_mapping = {f"{t}":0 for t in flop_sorted_tasks}
+            r=0
+            while r<len(flop_sorted_tasks) and task_mapping[f"{flop_sorted_tasks[r]}"]==0:
+                if len(device_comp['ut'])>0:
+                    task_mapping[f"{flop_sorted_tasks[r]}"]="ut"
+                    flop_sorted_tasks[r].device = device_comp['ut'].pop(0)
+                    flop_sorted_tasks[r].cur_tf=cur_tf
+                    flop_sorted_tasks[r].task_wait = wait
+                    flop_sorted_tasks[r].run_time = runtime
+                    flop_sorted_tasks[r].device.tasks.append(flop_sorted_tasks[r])
+                    # device_comp['ut']-=1
+                
+                elif len(device_comp['v'])>0:
+                    task_mapping[f"{flop_sorted_tasks[r]}"]="v"
+                    flop_sorted_tasks[r].device = device_comp['v'].pop(0)
+                    flop_sorted_tasks[r].cur_tf=cur_tf
+                    flop_sorted_tasks[r].task_wait = wait
+                    flop_sorted_tasks[r].run_time = runtime
+                    flop_sorted_tasks[r].device.tasks.append(flop_sorted_tasks[r])
+                    # device_comp['v']-=1
+
+                elif len(device_comp['t'])>0:
+                    task_mapping[f"{flop_sorted_tasks[r]}"]="t"
+                    flop_sorted_tasks[r].device = device_comp["t"].pop(0)
+                    flop_sorted_tasks[r].cur_tf=cur_tf
+                    flop_sorted_tasks[r].task_wait = wait
+                    flop_sorted_tasks[r].run_time = runtime
+                    flop_sorted_tasks[r].device.tasks.append(flop_sorted_tasks[r])
+                    # device_comp['t']-=1
+                r+=1
+
+        
+        
 @dataclass
 class Device:
     subcluster: Subcluster
     device_id: int
     dev_type: str #"ut, t, v"
     tasks: List[Task] 
-
+    
+    @property
     def device_name(self):
         return f"{self.subcluster.name}-{self.device_id}"
     
-    def assigned(self, tasks:List[Task]):
-        for t in tasks:
-            t.device = self
-        self.tasks.extend(tasks)
+    def cleanup(self):
+        self.tasks = [i for i in self.tasks if i.task_remaining_time!=0]
+
+
 
 if __name__=="__main__":
     import time
+    import matplotlib.pyplot as plt
+    import sys
     subcluster = Subcluster.setup_subcluster("dummy", 5, 5, 5)
     # print(subcluster.total_devs)
+    # uniform_arrival_times = [0, 0.5, 1]
+    uniform_arrival_times = [0.5*i for i in range(0,11)]
+    model_type = "resnet18" if len(sys.argv)<2 else sys.argv[1]
+    template = open("schedule_template.sh")
+    template_lines = template.readlines()
+
+    for u_ind, u in enumerate(uniform_arrival_times):
+        subcluster.tick_tock(u)
+
+        j = Job(f"j{u_ind}", u, 0, model_type, 10, 3, [] )
+
+        s=time.time()
+        comp_a = j.cost_function_explorer(subcluster, flag="even")
+        print(comp_a)
+        print(time.time() - s)
+        print()
+
+        s=time.time()
+        comm_a = j.cost_function_explorer(subcluster, flag="comm")
+        print(comm_a)
+        print(time.time() - s)
+
+        if comp_a[0]["best_throughput"] < comm_a[0]["best_throughput"]:
+            j.assign_subcluster(subcluster, assign_info=comp_a[0])
+            t_flag=1
+        else:
+            j.assign_subcluster(subcluster, assign_info=comm_a[0])
+            t_flag=2
+
+        print([ [str(i) for i in d.tasks ] for d in subcluster.devices])
+        print("full device picture", [ [ [f"{i} {i.task_remaining_time}"] for i in d.tasks ] for d in subcluster.devices])
+        print([f"{i} {i.task_remaining_time}" for i in j.tasks])
+        print()
+
+        #10 devices, 5ut, 5v, schedule 20 jobs, uniform interval -> 0.1s, 1s, 10s
+        #keep inputs 10, bn, bs should change ideally as we progress
+        #3 scripts, each script pick 10 devices at random from red_blue.op file, repeat 10 times
+        #loop for device selection and nodes is templated in schedule_template.sh
+
+
+
+        #construct command and write to hardcoded bash script : )
+        #blurb to add per job
+        #"dt=$(date -d '+60 seconds' +%s)"
+        #"command = "+f'"python3 onnxtest_w_json_bs.py 30 ./{model_type}_splits_{len(j.tasks)}_{1 or 0} {rank based on bn, bs} 4 {bs} '+ '${dt}"'
+        #'timeout 10m ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no animesh@${nodes[$n]} "pushd $path_prefix/aot_splitter; source /home/animesh/model_splitting/pi-torch/bin/activate; ${command} > ${path_dst}/speed_chronos${nodes[$n]}_${fake_world}_${fake_rank}_${inter}.log &" &'
+        #"wait" -> so all tasks that need to run together run together based on batch num
+        
+        add_lines= []
+        bn = j.bn
+        bs = j.bs
+        sleep_str = f"    sleep {u}\n"
+        rank_to_time_step_map={r:[0]*r+[f"{j.tasks[r]}"]*bn+[0]*(len(j.tasks)-r-1) for r in range(len(j.tasks))}
+        full_commands=[]
+        for time_slice in range(len(rank_to_time_step_map[0])):
+            dt_str = "    dt=$(date -d '+60 seconds' +%s)\n"
+            commands = []
+            for r in rank_to_time_step_map:
+                if rank_to_time_step_map[r][time_slice]!=0:
+                    pre_command_str = "[[ $(ps -aex | grep 'onnxtest' | wc -l) -gt 1 ]] && wait $(ps -aex | grep 'onnxtest' | awk '{print $1}');"
+                    command_str = "    command="+f'"{pre_command_str}python3 onnxtest_w_json_bs.py 1 ./{model_type}_splits_{len(j.tasks)}_{t_flag} {r} 4 {bs} '+ '${dt}"\n'
+                    ssh_str = '    timeout 10m ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no animesh@${nodes['+str(j.tasks[r].device.device_id)+']} "pushd $path_prefix/aot_splitter; source /home/animesh/model_splitting/pi-torch/bin/activate; ${command} > ${path_dst}/${repeat}/speed_chronos${nodes['+str(j.tasks[r].device.device_id)+']}_' + f'{len(j.tasks)}_{r}_{t_flag}.log &" &\n'
+                    commands.extend([command_str, ssh_str])
+            wait_str = f"    wait\n{dt_str}"
+            commands.append(wait_str)
+            full_commands.extend(commands)
+        function_lines = [f"f_{u_ind} () "+"{\n"] + [dt_str] + full_commands + ["}\n"]
+        template_lines = template_lines[0:1]+["\n"]+function_lines+["\n"]+template_lines[1:]
+        template_lines.extend(["\n", sleep_str, f"    f_{u_ind} &\n"])
+        
+        # template_lines.extend(full_commands)
+        # template_lines.extend([ssh_str, wait_str])
+    done_str = "done\n"
+    template_lines.append(done_str)
+    write_file = open(f"{model_type}_uniform_exp_0.5.sh", "w")
+    write_file.writelines(template_lines)
+    write_file.close()
+
+        
+
+
+
+
+
+
+
+
+
+    raise Exception("thanks for all the fish")
     j = Job("j0", 0, 0, "resnet18", 10, 3, [] )
     s=time.time()
     comp_a = j.cost_function_explorer(subcluster, flag="even")
@@ -393,10 +679,41 @@ if __name__=="__main__":
 
     print(time.time() - s)
     print()
-    exit()
+    # exit()
 
     s=time.time()
     comm_a = j.cost_function_explorer(subcluster, flag="comm")
     print(comm_a)
     print(time.time() - s)
 
+    #graph results, pick best throughput regardless of split
+    import sys
+    graph=0
+    if len(sys.argv) > 1:
+        graph = int(sys.argv[1])
+    if graph!=0:
+        fig, axs = plt.subplots(figsize=(25,10))
+        axs.set_xlabel("machine used (splits in model)")
+        axs.set_ylabel("throughput")
+        split_sorted_comp = sorted(comp_a, key=lambda x: x["splits"])
+        split_sorted_comm = sorted(comm_a, key=lambda x: x["splits"])
+        axs.scatter( [i["splits"] for i in split_sorted_comp], [i["best_throughput"] for i in split_sorted_comp], marker="^", label="balanced comp split")
+        axs.scatter( [i["splits"] for i in split_sorted_comm], [i["best_throughput"] for i in split_sorted_comm], marker="x", label="balanced comm split")
+        axs.legend()
+        fig.savefig("test_throughput.png")
+
+    if comp_a[0]["best_throughput"] < comm_a[0]["best_throughput"]:
+        j.assign_subcluster(subcluster, assign_info=comp_a[0])
+    else:
+        j.assign_subcluster(subcluster, assign_info=comm_a[0])
+    
+    # print(j)
+    # print([ i.device.device_name for i in j.tasks])
+    print([ [str(i) for i in d.tasks ] for d in subcluster.devices])
+
+    print([f"{i} {i.task_remaining_time}" for i in j.tasks])
+    print()
+    subcluster.tick_tock(10)
+    print([f"{i} {i.task_remaining_time}" for i in j.tasks])
+    print([ [str(i) for i in d.tasks ] for d in subcluster.devices])
+    
