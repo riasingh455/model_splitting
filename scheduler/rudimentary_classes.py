@@ -3,11 +3,14 @@ from dataclasses import dataclass, field
 from typing import Any, List, Dict, Tuple
 import model_splitter
 import numpy as np
+from pathlib import Path
+from multiprocessing import Pool
 
 @dataclass
 class ModelSplitWrapper:
     @staticmethod
     def split(splits, model_name, export, flop_w, comm_w):
+        add = 1 if flop_w==1 else 2
         if model_name=="resnet18":
             from torchvision.models import resnet18
             model = resnet18(weights=None).eval()
@@ -16,8 +19,8 @@ class ModelSplitWrapper:
             result = splitter.split_by_flops_pipeline(
                 flop_percentages=splits,
                 lookahead=5,
-                out_dir="./resnet18_splits",
-                meta_name="resnet_meta.json",
+                out_dir=f"./resnet18_splits_{add}",
+                meta_name="meta.json",
                 w_flop=flop_w,
                 w_net=0,
                 w_comm=comm_w,
@@ -34,7 +37,7 @@ class ModelSplitWrapper:
             result = splitter.split_by_flops_pipeline(
                 flop_percentages=splits,
                 lookahead=5,
-                out_dir="./vit_splits",
+                out_dir=f"./vit_splits_{add}",
                 meta_name="meta.json",
                 w_flop=flop_w,
                 w_net=0,
@@ -58,7 +61,7 @@ class ModelSplitWrapper:
             result = splitter.split_by_flops_pipeline(
                 flop_percentages=splits,
                 lookahead=5,
-                out_dir="./tcn_splits",
+                out_dir=f"./tcn_splits_{add}",
                 meta_name="meta.json",
                 w_flop=flop_w,
                 w_net=0,
@@ -76,7 +79,7 @@ class ModelSplitWrapper:
             result = splitter.split_by_flops_pipeline(
                 flop_percentages=splits,
                 lookahead=5,
-                out_dir="./eff_splits",
+                out_dir=f"./eff_splits_{add}",
                 meta_name="meta.json",
                 w_flop=flop_w,
                 w_net=0,
@@ -106,9 +109,11 @@ class Job:
 
         for r_ind, r in enumerate(result["splits"]):
             task = Task(f"{self.id}.{r_ind}", self, r["actual_flops"]*bs, 
-            self.best_rate, r["boundary_transfer_bytes"]*bs*10**-6, self.arrival, self.wait, np.inf, 0, None, bw  )
+            self.best_rate, r["boundary_transfer_bytes"]*bs*8*10**-6, self.arrival, self.wait, np.inf, 0, None, bw  )
             if r["actual_flops"]!=0:
                 self.tasks.append(task)
+        # for i in self.tasks:
+        #     print(i.output_bytes)
     
     def comm_split(self, num_splits, bs=1, export=False, bw=240):
         splits = [100/num_splits]*num_splits
@@ -119,9 +124,11 @@ class Job:
 
         for r_ind, r in enumerate(result["splits"]):
             task = task = Task(f"{self.id}.{r_ind}", self, r["actual_flops"]*bs, 
-            self.best_rate, r["boundary_transfer_bytes"]*bs*10**-6, self.arrival, self.wait, np.inf, 0, None, bw  )
+            self.best_rate, r["boundary_transfer_bytes"]*bs*8*10**-6, self.arrival, self.wait, np.inf, 0, None, bw  )
             if r["actual_flops"]!=0:
                 self.tasks.append(task)
+        # for i in self.tasks:
+        #     print(i.output_bytes)
 
     def custom_split(self, splits, bs=1, export=False, bw=240):
         result = ModelSplitWrapper.split(splits, self.model, export, flop_w=1, comm_w=0)
@@ -131,7 +138,7 @@ class Job:
 
         for r_ind, r in enumerate(result["splits"]):
             task = task = Task(f"{self.id}.{r_ind}", self, r["actual_flops"]*bs, 
-            self.best_rate, r["boundary_transfer_bytes"]*bs*10**-6, self.arrival, self.wait, np.inf, 0, None, bw  )
+            self.best_rate, r["boundary_transfer_bytes"]*bs*8*10**-6, self.arrival, self.wait, np.inf, 0, None, bw  )
             if r["actual_flops"]!=0:
                 self.tasks.append(task)
 
@@ -140,6 +147,66 @@ class Job:
         if self.tasks==None:
             return sum([task.flop for task in self.tasks])
 
+
+    def multi_proc_func(self, subcluster, flag, bs, bn, bw, custom, lag_pri, k):
+        # for bs in range(1, self.input_size+1):
+        #     bn = np.ceil(self.input_size/bs)
+        #     if bn*bs != self.input_size:
+        #         continue
+        #comp time
+        old_len = 0
+        # for splits in range(1, subcluster.total_devs+1):
+        temp_assign = []
+        # for splits in range(1, 7):
+        export=False if Path(f"{self.model}_splits_{1 if flag=='even' else 2}").is_dir()==True else True
+        # for splits in [5]:
+        for splits in [3,4,5,6]:
+        # for splits in [3]:
+            if flag=="even":
+                self.even_split(splits, bs=bs, bw=bw, export=export)
+            elif flag=="comm":
+                self.comm_split(splits, bs=bs, bw=bw, export=export)
+            elif flag=="custom" and custom!=None:
+                self.custom_split(custom, bs=bs, bw=bw, export=export)
+            else:
+                raise Exception("Incorrect options for cost function exploration please ensure all appropriate options filled")
+            if len(self.tasks) <= old_len:
+                break
+            # print([str(i) for i in self.tasks], [i.flop for i in self.tasks], len(self.tasks))
+            old_len = len(self.tasks)
+            #with the current tasks now in job, figure out best possible throughput 
+            #either through running immediately or running after waiting 
+            #wait time counts for throughput calculation
+            # print(bn)
+            m = subcluster.assign_exploration(tasks=self.tasks, batch_num=int(bn))
+            if len(m)==0:
+                continue
+            # print(m)
+            # sorted_m = {k: m[k] for k in sorted(list(m.keys()))}
+            sorted_m = {}
+            if lag_pri:
+                #latency sort first
+                sorted_map = {k:[round(v[0],3), round(v[1],3), round(v[2],3)] for k,v in sorted(m.items(), key=lambda x: x[1][0]+x[0])}
+                # print(sorted_map)
+                #top k sort on lag now
+                sorted_map = {k:[round(v[0],3), round(v[1],3), round(v[2],3)] for k,v in sorted(list(m.items())[:k], key=lambda x: x[1][2])}
+            else:
+                #top k sort on lag now
+                sorted_map = {k:[round(v[0],3), round(v[1],3), round(v[2],3)] for k,v in sorted(m.items(), key=lambda x: x[1][2])}
+                #latency sort first
+                sorted_map = {k:[round(v[0],3), round(v[1],3), round(v[2],3)] for k,v in sorted(list(m.items())[:k], key=lambda x: x[1][0]+x[0])}
+                # print(sorted_map)
+            #can change the order based on lag or throughput priority
+            best_throughput = round(float(bn*bs / (sorted_map[list(sorted_map.keys())[0]][0] + list(sorted_map.keys())[0]) ),3)
+            
+            info = {"bs":bs, "bn":int(bn), "splits":splits, "best_throughput": best_throughput, "tf":sorted_map[list(sorted_map.keys())[0]][1],
+                "wait":list(sorted_map.keys())[0], "best_runtime":sorted_map[list(sorted_map.keys())[0]][0],
+                "top_k": {k: v for k,v in list(sorted_map.items())[:k]}}
+            
+            # print(info)
+            temp_assign.append(info)
+        temp_assign = sorted(temp_assign, key=lambda x: x["best_throughput"], reverse=True)
+        return temp_assign[0]
     #TODO:
     #with jobs, iterate over batch size, decide input and time taken based on interference
     #also use valid wait time list per batch size, batch num combo
@@ -148,58 +215,17 @@ class Job:
     def cost_function_explorer(self, subcluster:Subcluster, flag="even", custom=None, bw=240, k=5, lag_pri=False):
         assignment_info=[]
         #wait time, splits of tasks, bs, bn per iteration
-        for bs in range(1, self.input_size+1):
-            bn = np.ceil(self.input_size/bs)
-            if bn*bs != self.input_size:
-                continue
-            #comp time
-            old_len = 0
-            # for splits in range(1, subcluster.total_devs+1):
-            for splits in [5]:
-                if flag=="even":
-                    self.even_split(splits, bs=bs, bw=bw)
-                elif flag=="comm":
-                    self.comm_split(splits, bs=bs, bw=bw)
-                elif flag=="custom" and custom!=None:
-                    self.custom_split(custom, bs=bs, bw=bw)
-                else:
-                    raise Exception("Incorrect options for cost function exploration please ensure all appropriate options filled")
-                if len(self.tasks) <= old_len:
-                    break
-                # print([str(i) for i in self.tasks], [i.flop for i in self.tasks], len(self.tasks))
-                old_len = len(self.tasks)
-                #with the current tasks now in job, figure out best possible throughput 
-                #either through running immediately or running after waiting 
-                #wait time counts for throughput calculation
-                # print(bn)
-                m = subcluster.assign_exploration(tasks=self.tasks, batch_num=int(bn))
-                if len(m)==0:
-                    continue
-                # print(m)
-                # sorted_m = {k: m[k] for k in sorted(list(m.keys()))}
-                sorted_m = {}
-                if lag_pri:
-                    #latency sort first
-                    sorted_map = {k:[round(v[0],3), round(v[1],3), round(v[2],3)] for k,v in sorted(m.items(), key=lambda x: x[1][0]+x[0])}
-                    # print(sorted_map)
-                    #top k sort on lag now
-                    sorted_map = {k:[round(v[0],3), round(v[1],3), round(v[2],3)] for k,v in sorted(list(m.items())[:k], key=lambda x: x[1][2])}
-                else:
-                    #top k sort on lag now
-                    sorted_map = {k:[round(v[0],3), round(v[1],3), round(v[2],3)] for k,v in sorted(m.items(), key=lambda x: x[1][2])}
-                    #latency sort first
-                    sorted_map = {k:[round(v[0],3), round(v[1],3), round(v[2],3)] for k,v in sorted(list(m.items())[:k], key=lambda x: x[1][0]+x[0])}
-                    # print(sorted_map)
-                #can change the order based on lag or throughput priority
-                best_throughput = round(float(bn*bs / (sorted_map[list(sorted_map.keys())[0]][0] + list(sorted_map.keys())[0]) ),3)
-                
-                info = {"bs":bs, "bn":int(bn), "splits":splits, "best_throughput": best_throughput, "tf":sorted_map[list(sorted_map.keys())[0]][1],
-                  "wait":list(sorted_map.keys())[0], "best_runtime":sorted_map[list(sorted_map.keys())[0]][0],
-                  "top_k": {k: v for k,v in list(sorted_map.items())[:k]}}
-                
-                # print(info)
-                assignment_info.append(info)
+        with Pool(processes=4) as pool:
+            # map() blocks until all processes complete and returns a standard list
+            # for bs in range(1, self.input_size+1):
+        #     bn = np.ceil(self.input_size/bs)
+        #     if bn*bs != self.input_size:
+        #         continue
+            assignment_info = pool.starmap(self.multi_proc_func, [ (subcluster,flag, bs, np.ceil(self.input_size/bs), bw, custom, lag_pri, k,) for bs in [1,2,3,5,10] if bs*np.ceil(self.input_size/bs)==self.input_size ])
+        # self.multi_proc_func(flag, bw, custom, lag_pri, k)
+        
         assignment_info = sorted(assignment_info, key=lambda x: x["best_throughput"], reverse=True)
+        # print(assignment_info)
         return assignment_info
 
     def assign_subcluster(self, subcluster:Subcluster, assign_info, flag="even", custom=None, bw=240):
@@ -278,17 +304,42 @@ class Subcluster:
         #make this specific ids instead of just number?
         # cls.name = name
         devices=[]
-        total_devs=ut+t+v
-        sub = cls(name, total_devs, devices)
-        for d in range(ut+t+v):
-            if d<ut:
-                dev = Device(sub, d, "ut", [])
+        if not Path(f"./subcluster_stats/{name}.ut.op").is_file():
+            total_devs=ut+t+v
+            sub = cls(name, total_devs, devices)
+            for d in range(ut+t+v):
+                if d<ut:
+                    dev = Device(sub, d, "ut", [])
+                    sub.devices.append(dev)
+                elif d<ut+v:
+                    dev = Device(sub, d, "v", [])
+                    sub.devices.append(dev)
+                elif d<ut+v+t:
+                    dev = Device(sub, d, "t", [])
+                    sub.devices.append(dev)
+        else:
+            un_f=open(f"./subcluster_stats/{name}.ut.op")
+            un_lines=un_f.readlines()
+            v_f = open(f"./subcluster_stats/{name}.v.op")
+            v_lines = v_f.readlines()
+            t_f = open(f"./subcluster_stats/{name}.t.op")
+            t_lines = t_f.readlines()
+            total_devs=len(un_lines) + len(v_lines) + len(t_lines)
+            sub = cls(name, total_devs, devices)
+            for d in un_lines:
+                d=d.strip()
+                id = d.split("-")[-1]
+                dev = Device(sub, id, "ut", [])
                 sub.devices.append(dev)
-            elif d<ut+v:
-                dev = Device(sub, d, "v", [])
+            for d in v_lines:
+                d=d.strip()
+                id = d.split("-")[-1]
+                dev = Device(sub, id, "v", [])
                 sub.devices.append(dev)
-            elif d<ut+v+t:
-                dev = Device(sub, d, "t", [])
+            for d in t_lines:
+                d=d.strip()
+                id = d.split("-")[-1]
+                dev = Device(sub, id, "t", [])
                 sub.devices.append(dev)
         return sub
     
@@ -367,21 +418,27 @@ class Subcluster:
             return achieved_fps
         elif len(peak_times)==1:
             val = self.tf_calc(len(peak_times)+bg_load, t)
+            # val = val if val < 0.9 else 0.9 #fixed upper limit
             val = val if val < 0.3 else 0.3 #fixed upper limit
             gnt = (peak_times[0]-maybe_gnt[0])/(1-val)
             achieved_fps = [gnt]
             return achieved_fps
 
-        for ind, i in enumerate(peak_times):
-            i = i - peak_times[ind-1] if ind > 0 else i
-            if i>0 and len(peak_times)-ind>0:
-                val = self.tf_calc(len(peak_times)-ind+bg_load, t)
-                val = val if val < 0.3 else 0.3 #fixed upper limit
-                # gnt = (i-maybe_gnt[ind])/(1-val) #if tf = (t-p)/t
-                gnt = (i)/(1-val) #if i > 0 else i / (i-val) #if tf = (t-p)/t
-                for k in range(ind, len(maybe_gnt)):
-                    maybe_gnt[k]=maybe_gnt[k]+gnt
-                    achieved_fps[k] = maybe_gnt[k] + (fp[k]-fp[ind])*peak_times[k]/fp[k]
+        # for ind, i in enumerate(peak_times):
+        val = self.tf_calc(len(peak_times)+bg_load, t)
+        val = val if val < 0.3 else 0.3 #fixed upper limit
+        achieved_fps = [(peak_times[i]-maybe_gnt[i])/(1-val) for i in range(len(peak_times))]
+
+            # i = i - peak_times[ind-1] if ind > 0 else i
+            # if i>0 and len(peak_times)-ind>0:
+            #     val = self.tf_calc(len(peak_times)-ind+bg_load, t)
+            #     # val = val if val < 0.9 else 0.9 #fixed upper limit
+            #     val = val if val < 0.3 else 0.3 #fixed upper limit
+            #     # gnt = (i-maybe_gnt[ind])/(1-val) #if tf = (t-p)/t
+            #     gnt = (i)/(1-val) #if i > 0 else i / (i-val) #if tf = (t-p)/t
+            #     for k in range(ind, len(maybe_gnt)):
+            #         maybe_gnt[k]=maybe_gnt[k]+gnt
+            #         achieved_fps[k] = maybe_gnt[k] + (fp[k]-fp[ind])*peak_times[k]/fp[k]
         return achieved_fps
     
     def assign_exploration(self, tasks: List[Task], batch_num: int):
@@ -452,6 +509,7 @@ class Subcluster:
                     # print(non_fp, task_mapping, time_slice) #, rank_to_time_step_map)
                     # print(fp, task_mapping, rank_to_time_step_map.keys())
                     peak_r = tasks[0].peak_rate
+                    # print("ass_ex", peak_r, tasks[0].peak_bw, [i*tasks[0].peak_bw for i in all_fp_nw])
                     # print(max([f*10**-9/peak_r for f in non_fp]))
                     # print(self.time_predictor([f*10**-9/2 for f in fp], fp, bg_load), fp)
                     accumulated_time+=max(self.time_predictor([f*10**-9/peak_r for f in fp], fp, temp_bg_load)+[f*10**-9/peak_r for f in non_fp] ) + max(all_fp_nw+[0])
@@ -465,6 +523,7 @@ class Subcluster:
                 time_passed = tasks[0].job.arrival+w
                 
                 #redo interference for tasks with lower flops and bg load from new tasks
+                # new_fp_per_job = [ [t.flop-(time_passed*t.flop/t.run_time)*j.bn for t in j.tasks if t.cur_tf < 0.9] for j in jobs_at_wait_time]
                 new_fp_per_job = [ [t.flop-(time_passed*t.flop/t.run_time)*j.bn for t in j.tasks if t.cur_tf < 0.3] for j in jobs_at_wait_time]
                 lags = [0]
                 for fp_entry in new_fp_per_job:
@@ -489,19 +548,21 @@ class Subcluster:
 
                 time_map[w]=[accumulated_time, (accumulated_time - peak_accumulated_time)/accumulated_time, max(lags)]
         # return {k:v[0] for k,v in sorted(time_map.items(), key=lambda x: x[1][0])}#, {k:v[1] for k,v in sorted(time_map.items(), key=lambda x: x[1][0])}
-        print(time_map)
+        # print(time_map)
         return {k:v for k,v in sorted(time_map.items(), key=lambda x: x[1][0])}#, {k:v[1] for k,v in sorted(time_map.items(), key=lambda x: x[1][0])}
 
 
     def assign(self, tasks: List[Task], runtime:float, wait: float, cur_tf:float):
         #explores assignments for all possible wait times and returns assignment with highest throughput
         device_comp = self.instance_map(wait, w_dev=True)
+        tasks[0].job.wait=wait
         if len(tasks) <= sum([len(i) for i in device_comp.values()]):
             jobs_at_wait_time = self.interferences(wait, runtime)
             #get time passed (current arrival+wait time) and subtract flops achieved from tasks
             time_passed = tasks[0].job.arrival+wait
             
             #redo interference for tasks with lower flops and bg load from new tasks
+            # new_fp_per_job = [ [t.flop-(time_passed*t.flop/t.run_time)*j.bn for t in j.tasks if t.cur_tf < 0.9] for j in jobs_at_wait_time]
             new_fp_per_job = [ [t.flop-(time_passed*t.flop/t.run_time)*j.bn for t in j.tasks if t.cur_tf < 0.3] for j in jobs_at_wait_time]
             # lags = [0]
             bg_load = self.total_devs
@@ -516,8 +577,10 @@ class Subcluster:
                 temp_lag = max(self.time_predictor([f*10**-9/peak_r for f in fp], fp, temp_bg_load)+[0])
                 cur_tasks = jobs_at_wait_time[fp_ind].tasks
                 for t in cur_tasks:
+                    # if t.cur_tf<0.9:
                     if t.cur_tf<0.3:
                         temp =  ((t.run_time+temp_lag) - (t.flop*10**-9/peak_r))/(t.run_time+temp_lag)
+                        # temp = 0.9 if temp > 0.9 else temp
                         temp = 0.3 if temp > 0.3 else temp
                         # new_cur_tfs.apend(temp)
                         t.cur_tf = temp
@@ -581,39 +644,77 @@ if __name__=="__main__":
     import time
     import matplotlib.pyplot as plt
     import sys
-    subcluster = Subcluster.setup_subcluster("dummy", 5, 5, 5)
+    # subcluster = Subcluster.setup_subcluster("dummy", 10, 10, 10)
+    dummy = "dummy" if len(sys.argv)<3 else sys.argv[2]
+    bash_writer = 0 if len(sys.argv)<4 else int(sys.argv[3])
+    subcluster = Subcluster.setup_subcluster(dummy, 0, 0, 10)
+    # run_flag = 
     # print(subcluster.total_devs)
     # uniform_arrival_times = [0, 0.5, 1]
-    uniform_arrival_times = [0.5*i for i in range(0,11)]
     model_type = "resnet18" if len(sys.argv)<2 else sys.argv[1]
+    pr=3 if len(sys.argv)<6 else float(sys.argv[5])
+    #fp rate = 0.35 for eff
+    #fp rate = 2.8 for res
+    #fp rate = 2.5 for vit
+    if model_type=="resnet18":
+        # pr=2.8
+        pr= 3 if len(sys.argv)<6 else float(sys.argv[5])
+        # pr=28
+    if model_type=="vit":
+        pr=3 if len(sys.argv)<6 else float(sys.argv[5])
     template = open("schedule_template.sh")
     template_lines = template.readlines()
+
+    job_array_list = []
+    full_lines=[]
+    inter_arrival_time = 0.5 if len(sys.argv)<7 else float(sys.argv[6])
+    uniform_arrival_times = [inter_arrival_time*i for i in range(0,6)]
+
+    prev_time = uniform_arrival_times[0]
+    bw=240 if len(sys.argv)<5 else int(sys.argv[4])
 
     for u_ind, u in enumerate(uniform_arrival_times):
         subcluster.tick_tock(u)
 
-        j = Job(f"j{u_ind}", u, 0, model_type, 10, 3, [] )
-
+        #peak rate for eff is 3?
+        #peak rate for resnet is -> 30
+        #peak rate for vit somehow 15????
+        j = Job(f"j{u_ind}", u, 0, model_type, 10, pr, [] )
+        job_array_list.append(j)
+        # s=time.time()
+        # comp_a = j.cost_function_explorer(subcluster, flag="even", bw=bw)
+        # print(comp_a[0])
+        # print(time.time() - s)
+        # print()
+        comp_a = [{"best_throughput":0}]
         s=time.time()
-        comp_a = j.cost_function_explorer(subcluster, flag="even")
-        print(comp_a)
+        comm_a = j.cost_function_explorer(subcluster, flag="comm", bw=bw)
+        print(comm_a[0])
         print(time.time() - s)
-        print()
+        # comm_a = [{"best_throughput":0}]
 
-        s=time.time()
-        comm_a = j.cost_function_explorer(subcluster, flag="comm")
-        print(comm_a)
-        print(time.time() - s)
-
-        if comp_a[0]["best_throughput"] < comm_a[0]["best_throughput"]:
-            j.assign_subcluster(subcluster, assign_info=comp_a[0])
+        if comp_a[0]["best_throughput"] > comm_a[0]["best_throughput"]:
+            j.assign_subcluster(subcluster, assign_info=comp_a[0], bw=bw)
             t_flag=1
         else:
-            j.assign_subcluster(subcluster, assign_info=comm_a[0])
+            j.assign_subcluster(subcluster, assign_info=comm_a[0], bw=bw)
             t_flag=2
 
         print([ [str(i) for i in d.tasks ] for d in subcluster.devices])
         print("full device picture", [ [ [f"{i} {i.task_remaining_time}"] for i in d.tasks ] for d in subcluster.devices])
+        #final job times and impact throughout the system
+        # print([ [ f"{t}, {t.task_wait}, {t.run_time}, {t.task_remaining_time}" for t in l.tasks ] for l in job_array_list])
+        # lines_to_write = [ ' '.join([ f"task:{t},{t.task_wait},{t.run_time},{t.task_remaining_time}" for t in l.tasks ]) + "\n" for l in job_array_list]
+        csv_lines = []
+        for d in subcluster.devices:
+            for t in d.tasks:
+                t_str = f"{u},{len(t.job.tasks)},{t.job.bs},{t.job.bn},{t.id},{t.task_arrival},{t.task_wait},{t.run_time},{t.task_remaining_time}\n"
+                csv_lines.append(t_str)
+
+
+        # lines_to_write = [ '\n'.join([f"task:{i},wait:{i.task_wait},runtime:{i.run_time},full_time:{i.task_remaining_time}" for i in d.tasks]) for d in subcluster.devices]
+        full_lines.extend(csv_lines)
+        
         print([f"{i} {i.task_remaining_time}" for i in j.tasks])
         print()
 
@@ -634,42 +735,46 @@ if __name__=="__main__":
         add_lines= []
         bn = j.bn
         bs = j.bs
-        sleep_str = f"    sleep {u}\n"
+        sleep_str = f"    sleep {u+j.wait if j.wait!=0 else prev_time+u}\n"
+        prev_time = u+j.wait
+
         rank_to_time_step_map={r:[0]*r+[f"{j.tasks[r]}"]*bn+[0]*(len(j.tasks)-r-1) for r in range(len(j.tasks))}
         full_commands=[]
+        metadata_dt = "    echo $(date '+TIME:%H:%M:%S.%3N') >> ${path_dst}/${repeat}/metadata_"+f"{u_ind}.log\n"
+        metadata_vals = "    echo 'minutes to subtract "+ f"{len(rank_to_time_step_map[0])}"+" splits " +f"{len(j.tasks)}" + " batch_num "+f"{bn} batch_size {bs}' >> "+"${path_dst}/${repeat}/metadata_"+f"{u_ind}.log\n"
+        # print(t_flag)
         for time_slice in range(len(rank_to_time_step_map[0])):
             dt_str = "    dt=$(date -d '+60 seconds' +%s)\n"
             commands = []
             for r in rank_to_time_step_map:
                 if rank_to_time_step_map[r][time_slice]!=0:
-                    pre_command_str = "[[ $(ps -aex | grep 'onnxtest' | wc -l) -gt 1 ]] && wait $(ps -aex | grep 'onnxtest' | awk '{print $1}');"
-                    command_str = "    command="+f'"{pre_command_str}python3 onnxtest_w_json_bs.py 1 ./{model_type}_splits_{len(j.tasks)}_{t_flag} {r} 4 {bs} '+ '${dt}"\n'
-                    ssh_str = '    timeout 10m ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no animesh@${nodes['+str(j.tasks[r].device.device_id)+']} "pushd $path_prefix/aot_splitter; source /home/animesh/model_splitting/pi-torch/bin/activate; ${command} > ${path_dst}/${repeat}/speed_chronos${nodes['+str(j.tasks[r].device.device_id)+']}_' + f'{len(j.tasks)}_{r}_{t_flag}.log &" &\n'
-                    commands.extend([command_str, ssh_str])
+                    # pre_command_str = "for i in $(ps -aex | grep onnxtest | grep ${nodes["+str(j.tasks[r].device.device_id)+"]} | awk '{print $1}'); do while [[ -d /proc/${i} ]]; do sleep 0.1; done; done;\n"
+                    pre_command_str = "for i in $(ps -aex | grep onnxtest | grep "+str(j.tasks[r].device.device_name)+" | awk '{print $1}'); do while [[ -d /proc/${i} ]]; do sleep 0.1; done; done;\n"
+                    command_str = "    command="+f'"python3 onnxtest_w_json_bs.py 1 ./{model_type}_splits_{len(j.tasks)}_{t_flag} {r} 4 {bs} '+ '${dt}"\n'
+                    ssh_str = '    timeout 10m ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no animesh@'+str(j.tasks[r].device.device_name)+' "pushd $path_prefix/aot_splitter; source /home/animesh/model_splitting/pi-torch/bin/activate; ${command} > ${path_dst}/${repeat}/speed_chronos'+str(j.tasks[r].device.device_name)+'_' + f'{len(j.tasks)}_{r}_{t_flag}_{time_slice}_{u}.log &" &\n'
+                    commands.extend([pre_command_str, command_str, ssh_str])
             wait_str = f"    wait\n{dt_str}"
             commands.append(wait_str)
             full_commands.extend(commands)
-        function_lines = [f"f_{u_ind} () "+"{\n"] + [dt_str] + full_commands + ["}\n"]
+        function_lines = [f"f_{u_ind} () "+"{\n"] + [metadata_dt, metadata_vals] + [dt_str] + full_commands + [metadata_dt] + ["}\n"]
         template_lines = template_lines[0:1]+["\n"]+function_lines+["\n"]+template_lines[1:]
         template_lines.extend(["\n", sleep_str, f"    f_{u_ind} &\n"])
         
         # template_lines.extend(full_commands)
         # template_lines.extend([ssh_str, wait_str])
-    done_str = "done\n"
+    final_wait = "\n    wait\n"
+    done_str = "done"
+    template_lines.append(final_wait)
     template_lines.append(done_str)
-    write_file = open(f"{model_type}_uniform_exp_0.5.sh", "w")
-    write_file.writelines(template_lines)
-    write_file.close()
-
-        
-
-
-
-
-
-
-
-
+    if bash_writer==1:
+        write_file = open(f"{model_type}_uniform_exp_0.5.sh", "w")
+        write_file.writelines(template_lines)
+        write_file.close()
+    csv_header="clock,world,bs,bn,task_id,task_arrival,task_wait,run_time,task_remaining_time\n"
+    simulation_f = open(f"sim.op.{dummy}.{model_type}.{bw}.{inter_arrival_time}.only_comm", "w")
+    simulation_f.write(csv_header)
+    simulation_f.writelines(full_lines)
+    simulation_f.close()
 
     raise Exception("thanks for all the fish")
     j = Job("j0", 0, 0, "resnet18", 10, 3, [] )

@@ -173,6 +173,20 @@ class FlopAwarePipelineSplitterBase:
     def _network_penalty(self, candidate_idx: int, start_idx: int, group: List[OrderedLayer]) -> float:
         return 0.0
 
+    # def _split_score(
+    #     self,
+    #     candidate_flops: float,
+    #     target_flops: float,
+    #     boundary_bytes: float,
+    #     network_penalty: float,
+    #     w_flop: float,
+    #     w_net: float,
+    #     w_comm: float,
+    # ) -> float:
+    #     flop_error = abs(candidate_flops - target_flops) / max(target_flops, 1e-9)
+    #     comm_cost = boundary_bytes / max(1.0, 1024.0 * 1024.0)
+    #     return w_flop * flop_error + w_net * network_penalty + w_comm * comm_cost
+
     def _split_score(
         self,
         candidate_flops: float,
@@ -183,9 +197,14 @@ class FlopAwarePipelineSplitterBase:
         w_net: float,
         w_comm: float,
     ) -> float:
-        flop_error = abs(candidate_flops - target_flops) / max(target_flops, 1e-9)
         comm_cost = boundary_bytes / max(1.0, 1024.0 * 1024.0)
+
+        if target_flops <= 0.0 or candidate_flops <= 0.0:
+            return w_net * network_penalty + w_comm * comm_cost
+
+        flop_error = abs(candidate_flops - target_flops) / max(target_flops, 1e-9)
         return w_flop * flop_error + w_net * network_penalty + w_comm * comm_cost
+
 
     def _find_best_split(
         self,
@@ -201,18 +220,58 @@ class FlopAwarePipelineSplitterBase:
         end_limit_global = min(len(self.ordered_layers), start_idx + max(lookahead, 1) * 8)
 
         for end in range(start_idx, end_limit_global):
-            candidate = sum(self.ordered_layers[i][2] for i in range(start_idx, end + 1))
-            if candidate > 1.5 * target_flops and end > start_idx:
-                break
             group = self.ordered_layers[start_idx:end + 1]
-            boundary_bytes = self.ordered_layers[end][3]
+            candidate = sum(layer[2] for layer in group)
+            boundary_bytes = group[-1][3]
             network_pen = self._network_penalty(end, start_idx, group)
-            score = self._split_score(candidate, target_flops, boundary_bytes, network_pen, w_flop, w_net, w_comm)
+
+            if target_flops > 0.0 and candidate > 1.5 * target_flops and end > start_idx:
+                break
+
+            if target_flops <= 0.0:
+                score = w_net * network_pen + w_comm * boundary_bytes
+            else:
+                score = self._split_score(
+                    candidate,
+                    target_flops,
+                    boundary_bytes,
+                    network_pen,
+                    w_flop,
+                    w_net,
+                    w_comm,
+                )
+
             if score < best_score:
                 best_score = score
                 best_cut = end
 
         return best_cut, best_score
+    # def _find_best_split(
+    #     self,
+    #     start_idx: int,
+    #     target_flops: float,
+    #     lookahead: int,
+    #     w_flop: float,
+    #     w_net: float,
+    #     w_comm: float,
+    # ) -> Tuple[int, float]:
+    #     best_cut = start_idx
+    #     best_score = float("inf")
+    #     end_limit_global = min(len(self.ordered_layers), start_idx + max(lookahead, 1) * 8)
+
+    #     for end in range(start_idx, end_limit_global):
+    #         candidate = sum(self.ordered_layers[i][2] for i in range(start_idx, end + 1))
+    #         if candidate > 1.5 * target_flops and end > start_idx:
+    #             break
+    #         group = self.ordered_layers[start_idx:end + 1]
+    #         boundary_bytes = self.ordered_layers[end][3]
+    #         network_pen = self._network_penalty(end, start_idx, group)
+    #         score = self._split_score(candidate, target_flops, boundary_bytes, network_pen, w_flop, w_net, w_comm)
+    #         if score < best_score:
+    #             best_score = score
+    #             best_cut = end
+
+    #     return best_cut, best_score
 
     def _layer_group_flops(self, group: List[OrderedLayer]) -> Dict[str, float]:
         return {name: float(flops) for name, _, flops, _ in group}
@@ -240,90 +299,65 @@ class FlopAwarePipelineSplitterBase:
         artifacts = []
 
         for split_id, target in enumerate(targets):
-            if split_id == len(targets) - 1:
+            is_last = split_id == len(targets) - 1
+
+            if is_last:
                 group = self.ordered_layers[start_idx:]
                 cut = len(self.ordered_layers) - 1
                 split_score = 0.0
             else:
-                cut, split_score = self._find_best_split(start_idx, target, lookahead, w_flop, w_net, w_comm)
+                cut, split_score = self._find_best_split(
+                    start_idx=start_idx,
+                    target_flops=target,
+                    lookahead=lookahead,
+                    w_flop=w_flop,
+                    w_net=w_net,
+                    w_comm=w_comm,
+                )
                 group = self.ordered_layers[start_idx:cut + 1]
 
             module = ExportableSplit([(n, m) for n, m, _, _ in group]).eval().to(self.device)
             inp_shape = tuple(x.shape)
             exported_path = os.path.join(out_dir, f"split_{split_id}.pt2")
-            # mem_usage = -1
+
             with torch.no_grad():
-                ep = torch.export.export(module, (x,), strict=True,
-                dynamic_shapes=({0: torch.export.Dim("batch", min=1, max=1024)},)
-                    # dynamic_shapes={"x": {0: torch.export.Dim("batch", min=1, max=2**32)}}#, "output": {0: torch.export.Dim("batch", min=1, max=1024)}}
+                ep = torch.export.export(
+                    module,
+                    (x,),
+                    strict=True,
+                    dynamic_shapes=({0: torch.export.Dim("batch", min=1, max=1024)},),
                 )
-                
-                # Path.unlink(f"{out_dir}/split_{split_id}.onnx")
 
                 if export:
                     os.makedirs(out_dir, exist_ok=True)
-                    # torch.export.save(ep, exported_path)
 
-                    # onnx_ep = torch.onnx.export(module, (x,), 
-                    onnx_ep = torch.onnx.export(ep, (x,), 
-                    input_names=["input"],
-                    output_names=["output"],
-                    # optimize=False if "vit" in out_dir else True,
-                    # dynamic_shapes=({0: torch.export.Dim("batch", min=1, max=1024)},)#, "y": {0: torch.export.Dim("batch", min=1, max=1024)}}
-                    dynamic_axes={"input": {0: "batch"}, "output": {0: "batch"}} #if "vit" not in out_dir else {"input": {0: torch.export.Dim("batch", min=1, max=1024)}, "output": {0: torch.export.Dim("batch", min=1, max=1024)}}
+                    onnx_ep = torch.onnx.export(
+                        ep,
+                        (x,),
+                        input_names=["input"],
+                        output_names=["output"],
+                        dynamic_axes={"input": {0: "batch"}, "output": {0: "batch"}},
                     )
 
                     from onnxsim import simplify
                     import onnx
                     from onnxruntime.quantization import quantize_dynamic, QuantType
                     from pathlib import Path
-                    # onnx.save(onnx_ep,f"{out_dir}/split_{split_id}.onnx" )
-                    # onnx_model = onnx.load(f"{out_dir}/split_{split_id}.onnx")
-                    # if "vit" not in out_dir:
-                    # print(onnx_ep.model_proto)
-                    onnx_sim, check = simplify(onnx_ep.model_proto)#, perform_optimization=False if "vit" in out_dir else True, 
-                    # skip_shape_inference=True if "vit" in out_dir else False)
-                        # if check:
-                    onnx.save(onnx_sim, f"{out_dir}/split_{split_id}.simp.onnx")
-                    # else:
-                    #     onnx.save(onnx_ep.model_proto, f"{out_dir}/split_{split_id}.simp.onnx")
-                    quantize_dynamic(f"{out_dir}/split_{split_id}.simp.onnx", 
-                    f"{out_dir}/split_{split_id}_quant.onnx", weight_type=QuantType.QUInt8)
-                    Path.unlink(f"{out_dir}/split_{split_id}.simp.onnx")
-                        # quantize_dynamic(f"{out_dir}/split_{split_id}.onnx", 
-                        # f"{out_dir}/split_{split_id}_quant.onnx", weight_type=QuantType.QUInt8)
-                        # # Path.unlink(f"{out_dir}/split_{split_id}.simp.onnx")
-                # if profiler:
-                #     # onnx_mod = onnx.load(f"{out_dir}/split_{split_id}_quant.onnx")
-                #     # import onnxruntime as ort
-                #     # import numpy as np
-                #     # onnx_mod = ort.InferenceSession(f"{out_dir}/split_{split_id}_quant.onnx")
-                #     # input_map = {i.name: x.numpy() for ind, i in enumerate(onnx_mod.get_inputs())}
-                #     # print(input_map)
-                #     from executorch.backends.xnnpack.quantizer.xnnpack_quantizer import XNNPACKQuantizer, get_symmetric_quantization_config
-                #     from torchao.quantization.pt2e.quantize_pt2e import convert_pt2e, prepare_pt2e
-                #     qparams = get_symmetric_quantization_config(is_per_channel=True)
-                #     quantizer = XNNPACKQuantizer()
-                #     quantizer.set_global(qparams)
-                #     prepared_model = prepare_pt2e(ep.module(), quantizer)
-                #     prepared_model(x)
-                #     quantized_model = convert_pt2e(prepared_model)
-                #     q_ep = torch.export.export(quantized_model, (x,))
-                #     ep = torch.export.export(q_ep.module(), (x,))
-                #     y = ep.module()(x)
 
-                #     with profile(
-                #         activities=[ProfilerActivity.CPU], profile_memory=True, record_shapes=True
-                #     ) as prof:
-                #         y = ep.module()(x)
-                        # y = onnx_mod.run(None, input_feed=input_map)
-                    # mem_usage = prof.key_averages()
-                    # print(mem_usage)
-                # else:
+                    onnx_sim, check = simplify(onnx_ep.model_proto)
+                    onnx.save(onnx_sim, f"{out_dir}/split_{split_id}.simp.onnx")
+                    quantize_dynamic(
+                        f"{out_dir}/split_{split_id}.simp.onnx",
+                        f"{out_dir}/split_{split_id}_quant.onnx",
+                        weight_type=QuantType.QUInt8,
+                    )
+                    Path.unlink(f"{out_dir}/split_{split_id}.simp.onnx")
+
                 y = ep.module()(x)
 
             flops = sum(f for _, _, f, _ in group)
             cumulative += flops
+
             artifacts.append(
                 SplitArtifact(
                     split_id=split_id,
@@ -339,7 +373,6 @@ class FlopAwarePipelineSplitterBase:
                     network_flops=self._layer_group_flops(group),
                     split_score=split_score,
                     chosen_cut=cut,
-                    # mem_usage=mem_usage#(mem_usage/8 - self._bytes_from_shape(tuple(y.shape)))  if mem_usage!=-1 else mem_usage
                 )
             )
 
@@ -352,11 +385,154 @@ class FlopAwarePipelineSplitterBase:
             "weights": {"w_flop": w_flop, "w_net": w_net, "w_comm": w_comm},
             "splits": [a.__dict__ for a in artifacts],
         }
+
         if export:
             with open(os.path.join(out_dir, meta_name), "w") as f:
                 json.dump(result, f, indent=2, default=str)
 
         return result
+
+
+    # def split_by_flops_pipeline(
+    #     self,
+    #     flop_percentages: List[float],
+    #     lookahead: int,
+    #     out_dir: str,
+    #     meta_name: str,
+    #     w_flop: float = 1.0,
+    #     w_net: float = 0.0,
+    #     w_comm: float = 0.0,
+    #     export: bool = False,
+    #     profiler: bool = False,
+    # ) -> Dict[str, Any]:
+
+    #     if abs(sum(flop_percentages) - 100.0) > 1e-6:
+    #         raise ValueError("FLOP percentages must sum to 100")
+
+    #     targets = [(p / 100.0) * self.total_flops for p in flop_percentages]
+    #     x = self._dummy.clone()
+    #     start_idx = 0
+    #     cumulative = 0.0
+    #     artifacts = []
+
+    #     for split_id, target in enumerate(targets):
+    #         if split_id == len(targets) - 1:
+    #             group = self.ordered_layers[start_idx:]
+    #             cut = len(self.ordered_layers) - 1
+    #             split_score = 0.0
+    #         else:
+    #             cut, split_score = self._find_best_split(start_idx, target, lookahead, w_flop, w_net, w_comm)
+    #             group = self.ordered_layers[start_idx:cut + 1]
+
+    #         module = ExportableSplit([(n, m) for n, m, _, _ in group]).eval().to(self.device)
+    #         inp_shape = tuple(x.shape)
+    #         exported_path = os.path.join(out_dir, f"split_{split_id}.pt2")
+    #         # mem_usage = -1
+    #         with torch.no_grad():
+    #             ep = torch.export.export(module, (x,), strict=True,
+    #             dynamic_shapes=({0: torch.export.Dim("batch", min=1, max=1024)},)
+    #                 # dynamic_shapes={"x": {0: torch.export.Dim("batch", min=1, max=2**32)}}#, "output": {0: torch.export.Dim("batch", min=1, max=1024)}}
+    #             )
+                
+    #             # Path.unlink(f"{out_dir}/split_{split_id}.onnx")
+
+    #             if export:
+    #                 os.makedirs(out_dir, exist_ok=True)
+    #                 # torch.export.save(ep, exported_path)
+
+    #                 # onnx_ep = torch.onnx.export(module, (x,), 
+    #                 onnx_ep = torch.onnx.export(ep, (x,), 
+    #                 input_names=["input"],
+    #                 output_names=["output"],
+    #                 # optimize=False if "vit" in out_dir else True,
+    #                 # dynamic_shapes=({0: torch.export.Dim("batch", min=1, max=1024)},)#, "y": {0: torch.export.Dim("batch", min=1, max=1024)}}
+    #                 dynamic_axes={"input": {0: "batch"}, "output": {0: "batch"}} #if "vit" not in out_dir else {"input": {0: torch.export.Dim("batch", min=1, max=1024)}, "output": {0: torch.export.Dim("batch", min=1, max=1024)}}
+    #                 )
+
+    #                 from onnxsim import simplify
+    #                 import onnx
+    #                 from onnxruntime.quantization import quantize_dynamic, QuantType
+    #                 from pathlib import Path
+    #                 # onnx.save(onnx_ep,f"{out_dir}/split_{split_id}.onnx" )
+    #                 # onnx_model = onnx.load(f"{out_dir}/split_{split_id}.onnx")
+    #                 # if "vit" not in out_dir:
+    #                 # print(onnx_ep.model_proto)
+    #                 onnx_sim, check = simplify(onnx_ep.model_proto)#, perform_optimization=False if "vit" in out_dir else True, 
+    #                 # skip_shape_inference=True if "vit" in out_dir else False)
+    #                     # if check:
+    #                 onnx.save(onnx_sim, f"{out_dir}/split_{split_id}.simp.onnx")
+    #                 # else:
+    #                 #     onnx.save(onnx_ep.model_proto, f"{out_dir}/split_{split_id}.simp.onnx")
+    #                 quantize_dynamic(f"{out_dir}/split_{split_id}.simp.onnx", 
+    #                 f"{out_dir}/split_{split_id}_quant.onnx", weight_type=QuantType.QUInt8)
+    #                 Path.unlink(f"{out_dir}/split_{split_id}.simp.onnx")
+    #                     # quantize_dynamic(f"{out_dir}/split_{split_id}.onnx", 
+    #                     # f"{out_dir}/split_{split_id}_quant.onnx", weight_type=QuantType.QUInt8)
+    #                     # # Path.unlink(f"{out_dir}/split_{split_id}.simp.onnx")
+    #             # if profiler:
+    #             #     # onnx_mod = onnx.load(f"{out_dir}/split_{split_id}_quant.onnx")
+    #             #     # import onnxruntime as ort
+    #             #     # import numpy as np
+    #             #     # onnx_mod = ort.InferenceSession(f"{out_dir}/split_{split_id}_quant.onnx")
+    #             #     # input_map = {i.name: x.numpy() for ind, i in enumerate(onnx_mod.get_inputs())}
+    #             #     # print(input_map)
+    #             #     from executorch.backends.xnnpack.quantizer.xnnpack_quantizer import XNNPACKQuantizer, get_symmetric_quantization_config
+    #             #     from torchao.quantization.pt2e.quantize_pt2e import convert_pt2e, prepare_pt2e
+    #             #     qparams = get_symmetric_quantization_config(is_per_channel=True)
+    #             #     quantizer = XNNPACKQuantizer()
+    #             #     quantizer.set_global(qparams)
+    #             #     prepared_model = prepare_pt2e(ep.module(), quantizer)
+    #             #     prepared_model(x)
+    #             #     quantized_model = convert_pt2e(prepared_model)
+    #             #     q_ep = torch.export.export(quantized_model, (x,))
+    #             #     ep = torch.export.export(q_ep.module(), (x,))
+    #             #     y = ep.module()(x)
+
+    #             #     with profile(
+    #             #         activities=[ProfilerActivity.CPU], profile_memory=True, record_shapes=True
+    #             #     ) as prof:
+    #             #         y = ep.module()(x)
+    #                     # y = onnx_mod.run(None, input_feed=input_map)
+    #                 # mem_usage = prof.key_averages()
+    #                 # print(mem_usage)
+    #             # else:
+    #             y = ep.module()(x)
+
+    #         flops = sum(f for _, _, f, _ in group)
+    #         cumulative += flops
+    #         artifacts.append(
+    #             SplitArtifact(
+    #                 split_id=split_id,
+    #                 target_percentage=flop_percentages[split_id],
+    #                 actual_flops=flops,
+    #                 actual_percentage=(flops / self.total_flops) * 100 if self.total_flops > 0 else 0.0,
+    #                 input_shape=inp_shape,
+    #                 output_shape=tuple(y.shape),
+    #                 module_names=[n for n, _, _, _ in group],
+    #                 exported_path=exported_path,
+    #                 cumulative_flops=cumulative,
+    #                 boundary_transfer_bytes=self._bytes_from_shape(tuple(y.shape)),
+    #                 network_flops=self._layer_group_flops(group),
+    #                 split_score=split_score,
+    #                 chosen_cut=cut,
+    #                 # mem_usage=mem_usage#(mem_usage/8 - self._bytes_from_shape(tuple(y.shape)))  if mem_usage!=-1 else mem_usage
+    #             )
+    #         )
+
+    #         x = y.detach()
+    #         start_idx = cut + 1
+
+    #     result = {
+    #         "architecture": self.architecture_name(),
+    #         "total_flops": self.total_flops,
+    #         "weights": {"w_flop": w_flop, "w_net": w_net, "w_comm": w_comm},
+    #         "splits": [a.__dict__ for a in artifacts],
+    #     }
+    #     if export:
+    #         with open(os.path.join(out_dir, meta_name), "w") as f:
+    #             json.dump(result, f, indent=2, default=str)
+
+    #     return result
 
     def _get_ordered_layers(self):
         raise NotImplementedError
@@ -666,11 +842,11 @@ class FlopAwareTCNPipelineSplitter(FlopAwarePipelineSplitterBase):
 
 # if __name__=="__main__":
 #     pass
-#     # from torchvision.models import vision_transformer
+    from torchvision.models import vision_transformer
 
-#     # model = vision_transformer.vit_b_16(weights=None).eval()
+    model = vision_transformer.vit_b_16(weights=None).eval()
 #     # # splitter = FlopAwareViTPipelineSplitter(model, input_shape=(1, 3, 224, 224))
-#     # splitter = FlopAwareViTPipelineSplitter(model, input_shape=(2, 3, 224, 224))
+    splitter = FlopAwareViTPipelineSplitter(model, input_shape=(2, 3, 224, 224))
 
 #     # # Tradeoff intuition
 #     # #     If w_flop is high, the splitter prioritizes balanced compute across stages. -> keeps percentage close to provided percentage
@@ -717,10 +893,10 @@ class FlopAwareTCNPipelineSplitter(FlopAwarePipelineSplitterBase):
 #     #     export=True
 #     # )
 
-#     # from torchvision.models import resnet18
+    # from torchvision.models import resnet18
     
-#     # model = resnet18(weights=None).eval()
-#     # splitter = FlopAwareResNet18PipelineSplitter(model, input_shape=(2, 3, 224, 224))
+    # model = resnet18(weights=None).eval()
+    # splitter = FlopAwareResNet18PipelineSplitter(model, input_shape=(2, 3, 224, 224))
     
 #     # result = splitter.split_by_flops_pipeline(
 #     #     flop_percentages=[20, 30, 30, 20],
@@ -734,18 +910,19 @@ class FlopAwareTCNPipelineSplitter(FlopAwarePipelineSplitterBase):
 #     # )
 
 #     # EDIT: Added EfficientNet-B0 run block.
-#     # from torchvision.models import efficientnet_b0
+    # from torchvision.models import efficientnet_b0
 
-#     # model = efficientnet_b0(weights=None).eval()
-#     # splitter = FlopAwareEfficientNetB0PipelineSplitter(model, input_shape=(2, 3, 224, 224))
+    # model = efficientnet_b0(weights=None).eval()
+    # splitter = FlopAwareEfficientNetB0PipelineSplitter(model, input_shape=(2, 3, 224, 224))
 
-#     # result = splitter.split_by_flops_pipeline(
-#     #     flop_percentages=[20, 30, 30, 20],
-#     #     lookahead=5,
-#     #     out_dir="./efficientnet_b0_splits",
-#     #     meta_name="efficientnet_b0_meta.json",
-#     #     w_flop=0,
-#     #     w_net=0,
-#     #     w_comm=1,
-#     #     export=True
-#     # )
+    for s in range(3,7):
+        result = splitter.split_by_flops_pipeline(
+            flop_percentages=[100/s]*s,
+            lookahead=5,
+            out_dir=f"./resnet18_splits_{s}_nw",
+            meta_name="meta.json",
+            w_flop=0,
+            w_net=0,
+            w_comm=1,
+            export=True
+        )
