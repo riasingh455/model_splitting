@@ -12,20 +12,34 @@ class ModelSplitWrapper:
     def split(splits, model_name, export, flop_w, comm_w):
         add = 1 if flop_w==1 else 2
         if model_name=="resnet18":
+            # model = resnet18(weights=None).eval()
+    # splitter = FlopAwareResNet18PipelineSplitter(model, input_shape=(2, 3, 224, 224))
+    
+# result = splitter.split_by_flops_pipeline(
+    #         flop_percentages=[100/s]*s,
+    #         lookahead=5,
+    #         out_dir=f"./resnet18_splits_{s}_nw",
+    #         meta_name="meta.json",
+    #         w_flop=0,
+    #         w_net=0,
+    #         w_comm=1,
+    #         export=True
+    #     )
             from torchvision.models import resnet18
             model = resnet18(weights=None).eval()
             splitter = model_splitter.FlopAwareResNet18PipelineSplitter(model, input_shape=(2, 3, 224, 224))
-
+            print(splits)
             result = splitter.split_by_flops_pipeline(
                 flop_percentages=splits,
                 lookahead=5,
                 out_dir=f"./resnet18_splits_{add}",
                 meta_name="meta.json",
-                w_flop=flop_w,
+                w_flop=1,
                 w_net=0,
-                w_comm=comm_w,
+                w_comm=0,
                 export=export
             )
+            # print([r['actual_flops'] for r in result['splits']])
             return result
 
         elif model_name=="vit":
@@ -44,6 +58,7 @@ class ModelSplitWrapper:
                 w_comm=comm_w,
                 export=export
             )
+            # print([r['actual_flops']*10**-9/20 for r in result['splits']])
             return result
 
         if model_name=="tcn":
@@ -110,6 +125,7 @@ class Job:
         for r_ind, r in enumerate(result["splits"]):
             task = Task(f"{self.id}.{r_ind}", self, r["actual_flops"]*bs, 
             self.best_rate, r["boundary_transfer_bytes"]*bs*8*10**-6, self.arrival, self.wait, np.inf, 0, None, bw  )
+            # print(r_ind, r["actual_flops"]/bs, r["boundary_transfer_bytes"]/bs, num_splits, bs)
             if r["actual_flops"]!=0:
                 self.tasks.append(task)
         # for i in self.tasks:
@@ -221,7 +237,7 @@ class Job:
         #     bn = np.ceil(self.input_size/bs)
         #     if bn*bs != self.input_size:
         #         continue
-            assignment_info = pool.starmap(self.multi_proc_func, [ (subcluster,flag, bs, np.ceil(self.input_size/bs), bw, custom, lag_pri, k,) for bs in [1,2,3,5,10] if bs*np.ceil(self.input_size/bs)==self.input_size ])
+            assignment_info = pool.starmap(self.multi_proc_func, [ (subcluster,flag, bs, np.ceil(self.input_size/bs), bw, custom, lag_pri, k,) for bs in [1] if bs*np.ceil(self.input_size/bs)==self.input_size ])
         # self.multi_proc_func(flag, bw, custom, lag_pri, k)
         
         assignment_info = sorted(assignment_info, key=lambda x: x["best_throughput"], reverse=True)
@@ -425,9 +441,13 @@ class Subcluster:
             return achieved_fps
 
         # for ind, i in enumerate(peak_times):
-        val = self.tf_calc(len(peak_times)+bg_load, t)
-        val = val if val < 0.3 else 0.3 #fixed upper limit
-        achieved_fps = [(peak_times[i]-maybe_gnt[i])/(1-val) for i in range(len(peak_times))]
+        else:
+            achieved_fps=[]
+            for i in range(len(peak_times)):
+                val = self.tf_calc(1+bg_load, t)
+                val = val if val < 0.3 else 0.3 #fixed upper limit
+                achieved_fps.append((peak_times[i]-maybe_gnt[i])/(10-val))
+            
 
             # i = i - peak_times[ind-1] if ind > 0 else i
             # if i>0 and len(peak_times)-ind>0:
@@ -447,6 +467,7 @@ class Subcluster:
         # intra_interference = [] #the pipeline shape for the job, given all the tasks it interferes within itself
 
         rank_to_time_step_map={r:[0]*r+[tasks[r]]*batch_num+[0]*(len(tasks)-r-1) for r in range(len(tasks))}
+        # print(rank_to_time_step_map)
         # for time_step in range(len(rank_to_time_step_map[0])): #always has rank 0 -> single ml model, no splits
         #     slice_fp = [rank_to_time_step_map[r][time_step] for r in rank_to_time_step_map]
         #     slice_fp = [s for s in slice_fp if s!=0]
@@ -645,33 +666,34 @@ if __name__=="__main__":
     import matplotlib.pyplot as plt
     import sys
     # subcluster = Subcluster.setup_subcluster("dummy", 10, 10, 10)
+    model_type = "resnet18" if len(sys.argv)<2 else sys.argv[1]
     dummy = "dummy" if len(sys.argv)<3 else sys.argv[2]
     bash_writer = 0 if len(sys.argv)<4 else int(sys.argv[3])
+    bw=240 if len(sys.argv)<5 else int(sys.argv[4])
+    pr=3 if len(sys.argv)<6 else float(sys.argv[5])
+    inter_arrival_time = 0.5 if len(sys.argv)<7 else float(sys.argv[6])
+    csv_writer = 0 if len(sys.argv)<8 else float(sys.argv[7])
     subcluster = Subcluster.setup_subcluster(dummy, 0, 0, 10)
     # run_flag = 
     # print(subcluster.total_devs)
     # uniform_arrival_times = [0, 0.5, 1]
-    model_type = "resnet18" if len(sys.argv)<2 else sys.argv[1]
-    pr=3 if len(sys.argv)<6 else float(sys.argv[5])
     #fp rate = 0.35 for eff
     #fp rate = 2.8 for res
     #fp rate = 2.5 for vit
-    if model_type=="resnet18":
-        # pr=2.8
-        pr= 3 if len(sys.argv)<6 else float(sys.argv[5])
-        # pr=28
-    if model_type=="vit":
-        pr=3 if len(sys.argv)<6 else float(sys.argv[5])
+    # if model_type=="resnet18":
+    #     # pr=2.8
+    #     pr= 28 if len(sys.argv)<6 else float(sys.argv[5])
+    #     # pr=28
+    # if model_type=="vit":
+    #     pr=3 if len(sys.argv)<6 else float(sys.argv[5])
     template = open("schedule_template.sh")
     template_lines = template.readlines()
 
     job_array_list = []
     full_lines=[]
-    inter_arrival_time = 0.5 if len(sys.argv)<7 else float(sys.argv[6])
     uniform_arrival_times = [inter_arrival_time*i for i in range(0,6)]
 
     prev_time = uniform_arrival_times[0]
-    bw=240 if len(sys.argv)<5 else int(sys.argv[4])
 
     for u_ind, u in enumerate(uniform_arrival_times):
         subcluster.tick_tock(u)
@@ -681,12 +703,12 @@ if __name__=="__main__":
         #peak rate for vit somehow 15????
         j = Job(f"j{u_ind}", u, 0, model_type, 10, pr, [] )
         job_array_list.append(j)
-        # s=time.time()
-        # comp_a = j.cost_function_explorer(subcluster, flag="even", bw=bw)
-        # print(comp_a[0])
-        # print(time.time() - s)
-        # print()
-        comp_a = [{"best_throughput":0}]
+        s=time.time()
+        comp_a = j.cost_function_explorer(subcluster, flag="even", bw=bw)
+        print(comp_a[0])
+        print(time.time() - s)
+        print()
+        # comp_a = [{"best_throughput":0}]
         s=time.time()
         comm_a = j.cost_function_explorer(subcluster, flag="comm", bw=bw)
         print(comm_a[0])
@@ -708,7 +730,7 @@ if __name__=="__main__":
         csv_lines = []
         for d in subcluster.devices:
             for t in d.tasks:
-                t_str = f"{u},{len(t.job.tasks)},{t.job.bs},{t.job.bn},{t.id},{t.task_arrival},{t.task_wait},{t.run_time},{t.task_remaining_time}\n"
+                t_str = f"{u},{len(t.job.tasks)},{t.job.bs},{t.job.bn},{t.id},{t.task_arrival},{t.task_wait},{t.run_time},{t.task_remaining_time},{ 'c' if t_flag==1 else 'nw' }\n"
                 csv_lines.append(t_str)
 
 
@@ -770,11 +792,12 @@ if __name__=="__main__":
         write_file = open(f"{model_type}_uniform_exp_0.5.sh", "w")
         write_file.writelines(template_lines)
         write_file.close()
-    csv_header="clock,world,bs,bn,task_id,task_arrival,task_wait,run_time,task_remaining_time\n"
-    simulation_f = open(f"sim.op.{dummy}.{model_type}.{bw}.{inter_arrival_time}.only_comm", "w")
-    simulation_f.write(csv_header)
-    simulation_f.writelines(full_lines)
-    simulation_f.close()
+    if csv_writer==1:
+        csv_header="clock,world,bs,bn,task_id,task_arrival,task_wait,run_time,task_remaining_time,type\n"
+        simulation_f = open(f"sim.op.{dummy}.{model_type}.{bw}.{inter_arrival_time}", "w")
+        simulation_f.write(csv_header)
+        simulation_f.writelines(full_lines)
+        simulation_f.close()
 
     raise Exception("thanks for all the fish")
     j = Job("j0", 0, 0, "resnet18", 10, 3, [] )
