@@ -13,10 +13,16 @@ class ModelSplitWrapper:
     def split(splits, model_name, export, flop_w, comm_w):
         add = 1 if flop_w==1 else 2
         dir_name = f"/Users/animeshnd/model_splitting/scheduler/{model_name}_splits_{len(splits)}_{'c' if add==1 else 'nw'}"
+        # print(dir_name)
         if Path(dir_name).is_dir():
             f=open(f"{dir_name}/meta.json")
-            result = json.load(f)
-            return result
+            # result = json.load(f)
+            model_c = json.load(f)
+            # print(f)
+            c_flops = [r['actual_flops'] for r in model_c['splits']]
+            # print(f"comp flops: {c_flops}, {[round(100*i/sum(c_flops),2) for i in c_flops]}, comp nw:{[r['boundary_transfer_bytes']*8*10**-6 for r in model_c['splits']]} ")
+            
+            return model_c
         if model_name=="resnet18":
             # model = resnet18(weights=None).eval()
     # splitter = FlopAwareResNet18PipelineSplitter(model, input_shape=(2, 3, 224, 224))
@@ -133,7 +139,7 @@ class Job:
         for r_ind, r in enumerate(result["splits"]):
             task = Task(f"{self.id}.{r_ind}", self, r["actual_flops"]*bs, 
             self.best_rate, r["boundary_transfer_bytes"]*bs*8*10**-6, self.arrival, self.wait, np.inf, 0, None, bw  )
-            # print(r_ind, r["actual_flops"]/bs, r["boundary_transfer_bytes"]/bs, num_splits, bs)
+            # print(r_ind, r["actual_flops"], r["boundary_transfer_bytes"]*bs*8*10**-6, num_splits, bs)
             if r["actual_flops"]!=0:
                 self.tasks.append(task)
         # for i in self.tasks:
@@ -185,6 +191,7 @@ class Job:
         export=False if Path(f"{self.model}_splits_{1 if flag=='even' else 2}").is_dir()==True else True
         # for splits in [5]:
         # full_bw = bw
+        # print(f"currently available bw: {bw}")
         for splits in [3,4,5,6]:
             # bw = full_bw/splits
         # for splits in [3]:
@@ -242,7 +249,8 @@ class Job:
         for entry in temp_assign:
             # if entry!=best_entry:
             for k,v in entry["top_k"].items():
-                if v[2]<best_entry["lag"] and (round(abs(v[2]-best_entry["lag"])/best_entry["lag"],2) >=0.2 and round(abs((v[0]+k)-best_entry["latency"])/best_entry["latency"],2)<=0.25):
+                # if v[2]<best_entry["lag"] and (round(abs(v[2]-best_entry["lag"])/best_entry["lag"],2) >=0.1 and round(abs((v[0]+k)-best_entry["latency"])/best_entry["latency"],2)<=0.25):
+                if v[2]<best_entry["lag"] and round(abs((v[0]+k)-best_entry["latency"])/best_entry["latency"],2)<=0.1:
                     new_th = round((entry["bs"]*entry["bn"])/(v[0]+k),2)
                     best_entry["best_throughput"] = new_th
                     best_entry["lag"] = v[2]
@@ -327,10 +335,11 @@ class Task:
     cur_tf: float #hard stopped at 0.5, if greater than 0.5, bring down to 0.5
     device: Device
     peak_bw: float
+    fixed_task_wait: int = 0
 
     @property
     def task_remaining_time(self):
-        return self.task_arrival+ self.task_wait + self.run_time
+        return self.task_wait + self.run_time
 
     def tick_tock(self, tick):
         if tick <= self.task_wait:
@@ -425,7 +434,7 @@ class Subcluster:
             for t in d.tasks:
                 t.tick_tock(tick)
             d.cleanup()
-            cur_tasks = [1 for t in d.tasks if t.task_wait==0 and t.task_remaining_time!=0]+[0]
+            cur_tasks = [1 for t in d.tasks if t.task_remaining_time>0]+[0]
             if sum(cur_tasks)>0:
                 cur_active_devs+=1
         return cur_active_devs
@@ -463,7 +472,7 @@ class Subcluster:
                 if wait >= t.task_remaining_time:
                     #doesn't interfere if wait time exceed remaining time
                     continue
-                if t.task_remaining_time >= wait:
+                if t.task_remaining_time > wait:
                     #if within overlap duration, will interfere
                     # if d.device_name() not in interfering_tasks:
                     if t.job.id not in interfering_tasks:
@@ -563,26 +572,31 @@ class Subcluster:
         for d in self.devices:
             for t in d.tasks:
                 if t.task_wait<=0:
-                    running_task = t.flop*t.job.bn - (cur_time-(t.task_arrival+t.task_wait))*t.peak_rate
+                    running_task = max([(g_t.flop*10**-9)*(g_t.job.bn+len(g_t.job.tasks)-1) - (cur_time-(g_t.task_arrival+g_t.fixed_task_wait))*g_t.peak_rate for g_t in t.job.tasks])
+                    # print(running_task, t.job.id, (t.flop*10**-9)*t.job.bn, (cur_time-(t.task_arrival+t.fixed_task_wait)), (cur_time-(t.task_arrival+t.fixed_task_wait))*t.peak_rate, (t.task_arrival+t.fixed_task_wait), cur_time, )
                     if running_task>0:
                         act_active_devs+=1
         new_bw = self.peak_bw/act_active_devs if act_active_devs>0 else self.peak_bw
         new_bw = new_bw if new_bw > self.peak_bw/self.total_devs else self.peak_bw/self.total_devs
+        # print(new_bw, recent_id)
         visited=[]
         for d in self.devices:
             for t in d.tasks:
                 cur_job = t.job
                 if f"j{recent_id}" != cur_job.id and cur_job.id not in visited:
                     visited.append(cur_job.id)
-                    new_bn = min([(g_t.flop*10**-9*cur_job.bn - (cur_time-(g_t.task_arrival+g_t.task_wait))*g_t.peak_rate)//(g_t.flop*10**-9) for g_t in cur_job.tasks]+[0])
-                    valid_ext = [g_t for g_t in cur_job.tasks if (g_t.flop*10**-9*cur_job.bn - (cur_time-(g_t.task_arrival+g_t.task_wait))*g_t.peak_rate)>0]
-                    acc_nw = [v.output_bytes*new_bn*8/v.peak_bw for v in valid_ext]
-                    new_nw = [v.output_bytes*new_bn*8/new_bw for v in valid_ext]
+                    new_bn = max([( (g_t.flop*10**-9)*(cur_job.bn+len(cur_job.tasks)-1)- (cur_time-(g_t.task_arrival+g_t.fixed_task_wait))*g_t.peak_rate)//(g_t.flop*10**-9) for g_t in cur_job.tasks]+[1])
+                    valid_ext = [g_t for g_t in cur_job.tasks if (g_t.flop*10**-9**(cur_job.bn+len(cur_job.tasks)-1) - (cur_time-(g_t.task_arrival+g_t.fixed_task_wait))*g_t.peak_rate)>0]
+                    acc_nw = [v.output_bytes*new_bn/v.peak_bw for v in valid_ext]
+                    new_nw = [v.output_bytes*new_bn/new_bw for v in valid_ext]
                     ext_time = sum(new_nw)-sum(acc_nw)
+                    # if sum(new_nw) > 0:
                     for g_t in cur_job.tasks:
-                        g_t.run_time+=ext_time
-                        g_t.run_time = g_t.run_time if g_t.run_time>0 else 1
+                        if sum(new_nw) > 0:
+                            g_t.run_time+=ext_time
+                        g_t.run_time = g_t.run_time if g_t.run_time>0 else 0
                         g_t.peak_bw=new_bw
+            d.cleanup()
 
 
 
@@ -595,7 +609,7 @@ class Subcluster:
                 # t.run_time+=(new_nw - cur_nw) #if new_nw faster, then run_time decrease because new_nw-cur_nw < 0, else adds time
                 # t.run_time = t.run_time if t.run_time>0 else 1
                 # t.peak_bw = new_bw if new_bw > self.peak_bw/self.total_devs else self.peak_bw/self.total_devs
-        return new_bw
+        return active_devs
                     
                         
 
@@ -619,6 +633,7 @@ class Subcluster:
         #     slice_fp = [s for s in slice_fp if s!=0]
         #     intra_interference.append([i for i in slice_fp])
         time_map = {}
+        bs = tasks[0].job.bs
         # print(wait_times, len(tasks))
         for w in wait_times:
             # print(wait_times)
@@ -674,17 +689,21 @@ class Subcluster:
                 faker=0
                 for s in time_to_ranks_slice:
                     overhead = len(time_to_ranks_slice[s])-1+bg_load
+                    overhead = overhead if overhead > 0 else 0
                     non_fp = [tasks[i].flop for i in time_to_ranks_slice[s]]
-                    up_bw = self.peak_bw/(overhead if overhead>0 else 1) if self.peak_bw/(overhead if overhead>0 else 1)>self.peak_bw/self.total_devs else self.peak_bw/self.total_devs
+                    up_bw = self.peak_bw/(overhead+1)#/(overhead+1) #if self.peak_bw/(overhead if overhead>0 else 1)>self.peak_bw/self.total_devs else self.peak_bw/self.total_devs
                     # print( self.peak_bw/(overhead if overhead>0 else 1),self.peak_bw/self.total_devs )
-                    nw = [tasks[i].output_bytes*8/(up_bw) for i in time_to_ranks_slice[s] if i!=len(tasks)-1]+[0]
+                    # print(self.peak_bw, up_bw)
+                    nw = [tasks[i].output_bytes/(up_bw) for i in time_to_ranks_slice[s] if i!=len(tasks)-1]+[0]
                     # print(nw)
                     comp = self.time_predictor([f*10**-9/peak_r for f in non_fp], [], overhead)
+                    # print([tasks[i].output_bytes for i in time_to_ranks_slice[s] if i!=len(tasks)-1]+[0], self.peak_bw, up_bw)
                     # print(comp, nw, max(comp)+max(nw))
                     # faker+= max(comp)+max(nw)
                     accumulated_time+=max(comp) + max(nw+[0])
                     peak_accumulated_time += max([f*10**-9/peak_r for f in non_fp])+max(nw+[0])
                 # print(accumulated_time, faker)
+                # print(accumulated_time, len(tasks))
 
                 # print(device_comp, task_mapping)
                 # print([str(i) for i in rank_to_time_step_map[0]])
@@ -716,7 +735,7 @@ class Subcluster:
 
                 #impact on other running jobs if any?
                 #collect all tasks that are on volatile/throttled devices
-                jobs_at_wait_time = self.interferences(w, accumulated_time+tasks[0].task_arrival)
+                jobs_at_wait_time = self.interferences(w, accumulated_time)
                 # print("Waits", len(jobs_at_wait_time), w, accumulated_time, tasks[0].task_arrival)
                 #get time passed (current arrival+wait time) and subtract flops achieved from tasks
                 time_passed = tasks[0].job.arrival+w
@@ -726,21 +745,23 @@ class Subcluster:
                 
                 new_fp_per_job:List[List[Task]] = [j.tasks for j in jobs_at_wait_time]
                 bn = jobs_at_wait_time[0].bn if len(jobs_at_wait_time)>0 else 0
+                tasks_at_wait_time = sum([len(j.tasks) for j in jobs_at_wait_time])
+
                 # new_fp_per_job = [ [t.flop-(time_passed*t.flop/t.run_time)*j.bn for t in j.tasks if t.cur_tf < 0.3] for j in jobs_at_wait_time]
                 lags = [0]
                 for task_group in new_fp_per_job:
-                    fp_entry = [t for t in task_group if t.task_remaining_time >= time_passed and t.flop*bn*10**-9 - (time_passed-(t.task_wait + t.task_arrival))*(peak_r) > 0]
-                    fp = [t.flop*bn*10**-9 - (time_passed-(t.task_arrival+t.task_wait))*peak_r for t in fp_entry if t.cur_tf<0.9]
-                    new_bn = np.min([ (t.flop*bn*10**-9 - ((time_passed-(t.task_arrival+t.task_wait))*peak_r))//(t.flop*10**-9) for t in fp_entry]+[0])
+                    fp_entry = [t for t in task_group if t.task_remaining_time >= time_passed and t.flop*bn*10**-9 - (time_passed-(t.fixed_task_wait + t.task_arrival))*(peak_r) > 0]
+                    fp = [t.flop*(t.job.bn+len(t.job.tasks)-1)*10**-9 - (time_passed-(t.task_arrival+t.fixed_task_wait))*peak_r for t in fp_entry if t.cur_tf<0.9]
+                    new_bn = np.max([ (t.flop*(t.job.bn+len(t.job.tasks)-1)*10**-9 - ((time_passed-(t.task_arrival+t.fixed_task_wait))*peak_r))//(t.flop*10**-9) for t in fp_entry]+[1])
 
                     # print(new_bn, [t.flop*bn*10**-9 - ((time_passed-(t.task_arrival+t.task_wait))*peak_r)//(t.flop*10**-9) for t in fp_entry]+[0])
                     #take the accumulated remaining flops as an approximation 
                     # -> all of lags is approximations since we don't maintain batch num implementations -> might be a TODO moment tbh
                     # fp = [sum([f.flop for f in fp_entry if t.cur_tf<0.9])]
                     # fp = [t.flop*bn - (time_passed-(t.task_arrival+t.task_wait)*peak_r) for t in fp_entry if t.cur_tf<0.9]
-                    old_nw = [t.output_bytes*new_bn*8/(t.peak_bw) for t in fp_entry if t.peak_bw >= self.peak_bw/self.total_devs]+[0]
-                    up_bw = self.peak_bw/(len(jobs_at_wait_time)+len(tasks)) if self.peak_bw/(len(jobs_at_wait_time)+len(tasks)) > self.peak_bw/self.total_devs else self.peak_bw/self.total_devs
-                    nw = [t.output_bytes*new_bn*8/(up_bw) for t in fp_entry if t.peak_bw >= self.peak_bw/self.total_devs]+[0]
+                    old_nw = [t.output_bytes*new_bn/(t.peak_bw) for t in fp_entry if t.peak_bw >= self.peak_bw/self.total_devs]+[0]
+                    up_bw = self.peak_bw/(tasks_at_wait_time+len(tasks)) if self.peak_bw/(tasks_at_wait_time+len(tasks)) > self.peak_bw/self.total_devs else self.peak_bw/self.total_devs
+                    nw = [t.output_bytes*new_bn/(up_bw) for t in fp_entry if t.peak_bw >= self.peak_bw/self.total_devs]+[0]
 
 
                     
@@ -793,21 +814,26 @@ class Subcluster:
             new_fp_per_job:List[List[Task]] = [j.tasks for j in jobs_at_wait_time]
             bn = jobs_at_wait_time[0].bn if len(jobs_at_wait_time)>0 else 0
             peak_r = tasks[0].peak_rate
+            tasks_at_wait_time = sum([len(j.tasks) for j in jobs_at_wait_time])
             bg_load = self.total_devs - sum([len(i) for i in device_comp.values()])
             # new_fp_per_job = [ [t.flop-(time_passed*t.flop/t.run_time)*j.bn for t in j.tasks if t.cur_tf < 0.3] for j in jobs_at_wait_time]
             lags = [0]
             for task_group in new_fp_per_job:
                 # running_time = 
-                fp_entry = [t for t in task_group if t.task_wait + t.task_arrival <= time_passed and t.flop*10**-9*bn - (time_passed-(t.task_wait + t.task_arrival))*(peak_r) > 0]
-                fp = [t.flop*bn*10**-9 - (time_passed-(t.task_arrival+t.task_wait))*peak_r for t in fp_entry if t.cur_tf<0.9]
-                new_bn = np.min([ (t.flop*bn*10**-9 - ((time_passed-(t.task_arrival+t.task_wait))*peak_r))//(t.flop*10**-9) for t in fp_entry]+[0])
+                if task_group[0].task_wait!=0:
+                    continue
+                max_check = max([t.flop*10**-9*(t.job.bn+len(t.job.tasks)-1) - (time_passed-(t.fixed_task_wait + t.task_arrival))*(peak_r) for t in task_group])
+                fp_entry = [t for t in task_group if t.fixed_task_wait + t.task_arrival <= time_passed and max_check > 0]
+                fp = [t.flop*(t.job.bn+len(t.job.tasks)-1)*10**-9 - (time_passed-(t.task_arrival+t.fixed_task_wait))*peak_r for t in fp_entry if t.cur_tf<0.9]
+                new_bn = np.max([ (t.flop*(t.job.bn+len(t.job.tasks)-1)*10**-9 - ((time_passed-(t.task_arrival+t.fixed_task_wait))*peak_r))//(t.flop*10**-9) for t in fp_entry]+[1])
                 #take the accumulated remaining flops as an approximation 
                 # -> all of lags is approximations since we don't maintain batch num implementations -> might be a TODO moment tbh
                 # fp = [sum([f.flop for f in fp_entry if t.cur_tf<0.9])]
                 # fp = [t.flop*bn - (time_passed-(t.task_arrival+t.task_wait)*peak_r) for t in fp_entry if t.cur_tf<0.9]
-                old_nw = [t.output_bytes*new_bn*8/(t.peak_bw) for t in fp_entry if t.peak_bw > self.peak_bw/self.total_devs]
-                up_bw = self.peak_bw/(len(jobs_at_wait_time)+len(tasks)) if self.peak_bw/(len(jobs_at_wait_time)+len(tasks))>self.peak_bw/self.total_devs else self.peak_bw/self.total_devs
-                nw = [t.output_bytes*new_bn*8/(up_bw) for t in fp_entry if t.peak_bw > self.peak_bw/self.total_devs]
+                old_nw = [t.output_bytes*new_bn/(t.peak_bw) for t in fp_entry if t.peak_bw > self.peak_bw/self.total_devs]
+                up_bw = self.peak_bw/(tasks_at_wait_time+len(tasks)) if self.peak_bw/(tasks_at_wait_time+len(tasks))>self.peak_bw/self.total_devs else self.peak_bw/self.total_devs
+                nw = [t.output_bytes*new_bn/(up_bw) for t in fp_entry if t.peak_bw > self.peak_bw/self.total_devs]
+                print(f"new nw{sum(nw)} old nw{sum(old_nw)} ")
                 # nw = []
                 # temp_bg_load = bg_load - 1 + len(tasks) 
                 # or -1 to exclude current running task but bg load is being saturated anyway ? 
@@ -816,16 +842,18 @@ class Subcluster:
                 for t in fp_entry:
                     if t.cur_tf<0.9 and t.run_time>0:
                     # if t.cur_tf<0.3:
-                        temp =  ((t.run_time+temp_lag) - (t.flop*bn*10**-9/peak_r))/(t.run_time+temp_lag)
+                        temp =  ((t.run_time+temp_lag) - (t.flop*(t.job.bn+len(t.job.tasks)-1)*10**-9/peak_r))/(t.run_time+temp_lag)
                         temp = 0.9 if temp > 0.9 else temp
                         # temp = 0.3 if temp > 0.3 else temp
                         # new_cur_tfs.apend(temp)
                         t.cur_tf = temp if temp >= t.cur_tf else t.cur_tf
                     if t.peak_bw > self.peak_bw/self.total_devs:
-                        t.peak_bw = self.peak_bw/(len(jobs_at_wait_time)+len(tasks))
+                        t.peak_bw = self.peak_bw/(tasks_at_wait_time+len(tasks))
                         t.peak_bw = t.peak_bw if t.peak_bw>self.peak_bw/self.total_devs else self.peak_bw/self.total_devs
-                        t.run_time = t.run_time+temp_lag+sum(nw)-sum(old_nw)
-                        t.run_time = t.run_time if t.run_time>=0 else 1
+                        # print(len(jobs_at_wait_time), tasks_at_wait_time, len(tasks), self.peak_bw, t.peak_bw)
+                        if sum(nw)>0:
+                            t.run_time = t.run_time+temp_lag+sum(nw)-sum(old_nw)
+                            t.run_time = t.run_time if t.run_time>=0 else 0
             #redo interference for tasks with lower flops and bg load from new tasks
             # new_fp_per_job = [ [t.flop-(time_passed*t.flop/t.run_time)*j.bn for t in j.tasks if t.cur_tf < 0.9] for j in jobs_at_wait_time]
             # # new_fp_per_job = [ [t.flop-(time_passed*t.flop/t.run_time)*j.bn for t in j.tasks if t.cur_tf < 0.3] for j in jobs_at_wait_time]
@@ -869,6 +897,7 @@ class Subcluster:
                     flop_sorted_tasks[r].device = device_comp['ut'].pop(0)
                     flop_sorted_tasks[r].cur_tf=cur_tf
                     flop_sorted_tasks[r].task_wait = wait
+                    flop_sorted_tasks[r].fixed_task_wait = wait
                     flop_sorted_tasks[r].run_time = runtime
                     flop_sorted_tasks[r].device.tasks.append(flop_sorted_tasks[r])
                     # device_comp['ut']-=1
@@ -878,6 +907,7 @@ class Subcluster:
                     flop_sorted_tasks[r].device = device_comp['v'].pop(0)
                     flop_sorted_tasks[r].cur_tf=cur_tf
                     flop_sorted_tasks[r].task_wait = wait
+                    flop_sorted_tasks[r].fixed_task_wait = wait
                     flop_sorted_tasks[r].run_time = runtime
                     flop_sorted_tasks[r].device.tasks.append(flop_sorted_tasks[r])
                     # device_comp['v']-=1
@@ -887,6 +917,7 @@ class Subcluster:
                     flop_sorted_tasks[r].device = device_comp["t"].pop(0)
                     flop_sorted_tasks[r].cur_tf=cur_tf
                     flop_sorted_tasks[r].task_wait = wait
+                    flop_sorted_tasks[r].fixed_task_wait = wait
                     flop_sorted_tasks[r].run_time = runtime
                     flop_sorted_tasks[r].device.tasks.append(flop_sorted_tasks[r])
                     # device_comp['t']-=1
@@ -906,7 +937,7 @@ class Device:
         return f"{self.subcluster.name}-{self.device_id}"
     
     def cleanup(self):
-        self.tasks = [i for i in self.tasks if i.task_remaining_time!=0]
+        self.tasks = [i for i in self.tasks if i.task_remaining_time>0]
 
 
 
@@ -986,7 +1017,7 @@ if __name__=="__main__":
                 # print(temp_time_arr)
                 # if temp_time_arr==1:
                 for stagger_ind in range(temp_time_arr):
-                    uniform_arrival_times.append(t_ind*60*inter_arrival_time+0.001*(stagger_ind+ga_ind))
+                    uniform_arrival_times.append(t_ind*60*0.01*inter_arrival_time+0.001*(stagger_ind+ga_ind))
                 # uniform_arrival_times.extend([t_ind*60*inter_arrival_time+0.001*ga_ind]*temp_time_arr)
 
                 # if len(uniform_arrival_times)>=job_nums:
@@ -1038,19 +1069,23 @@ if __name__=="__main__":
         uniform_arrival_times = [0]+np.cumsum(inter_arrival_times)
         diffs = np.diff(uniform_arrival_times)
         # print(np.mean(diffs))
-
+    print(len(uniform_arrival_times))
+    raise Exception("kys")
     prev_time = uniform_arrival_times[0]
     # print(uniform_arrival_times, len(uniform_arrival_times))
     # raise Exception("stop right there")
     prev_u = 0
     for u_ind, u in enumerate(uniform_arrival_times):
+        # print("full device picture b4", [ [ [f"{i} {i.task_remaining_time} {i.peak_bw}"] for i in d.tasks ] for d in subcluster.devices])
         active_devs = subcluster.tick_tock(u-prev_u)
         # print("just before any launch check")
-        # print("full device picture", [ [ [f"{i} {i.task_remaining_time}"] for i in d.tasks ] for d in subcluster.devices])
+        # print("full device picture a4", [ [ [f"{i} {i.task_remaining_time} {i.peak_bw}"] for i in d.tasks ] for d in subcluster.devices])
 
-        avail_bw = subcluster.update_tasks(u, u_ind-1 )
+        run_dev = subcluster.update_tasks(u, u_ind-1 )
+        # run_dev = sum([1 for d in subcluster.devices if len(d.tasks)!=0 and d.tasks[0].task_wait==0])
         prev_u=u
-        # if u_ind == 2:
+        print(f"{u_ind} current active_devs {run_dev}")
+        # if u_ind == 6:
         #     raise Exception("kys")
         # if u_ind%5==0:
         #     bw=10 if bw==30 else 30
@@ -1066,7 +1101,7 @@ if __name__=="__main__":
             comp_a = [{"best_throughput":0, "splits":np.inf}]
         else:
             s=time.time()
-            comp_a = j.cost_function_explorer(subcluster, flag="even", bw=avail_bw, leeway=leeway)
+            comp_a = j.cost_function_explorer(subcluster, flag="even", bw=bw, leeway=leeway)
             print(comp_a[0])
             print(time.time() - s)
         print()
@@ -1074,28 +1109,31 @@ if __name__=="__main__":
             comm_a = [{"best_throughput":0, "splits":np.inf}]
         else:
             s=time.time()
-            comm_a = j.cost_function_explorer(subcluster, flag="comm", bw=avail_bw, leeway=leeway)
+            comm_a = j.cost_function_explorer(subcluster, flag="comm", bw=bw, leeway=leeway)
             print(comm_a[0])
             print(time.time() - s)
         
-
         if comp_a[0]["best_throughput"] > comm_a[0]["best_throughput"]:
             if ((leeway!=0) and (comm_a[0]["splits"] < comp_a[0]["splits"]) and (0<= round(abs(comp_a[0]["best_throughput"]-comm_a[0]["best_throughput"])/comp_a[0]["best_throughput"],2)<= 0.1)):
-                j.assign_subcluster(subcluster, assign_info=comm_a[0], bw=bw)
+                avail_bw = bw/(run_dev+comm_a[0]["splits"])
+                j.assign_subcluster(subcluster, assign_info=comm_a[0], bw=avail_bw)
                 t_flag=2
             else:
-                j.assign_subcluster(subcluster, assign_info=comp_a[0], bw=bw)
+                avail_bw = bw/(run_dev+comp_a[0]["splits"])
+                j.assign_subcluster(subcluster, assign_info=comp_a[0], bw=avail_bw)
                 t_flag=1
         else:
             if ((leeway!=0) and (comp_a[0]["splits"] < comm_a[0]["splits"]) and (0<= round(abs(comp_a[0]["best_throughput"]-comm_a[0]["best_throughput"])/comm_a[0]["best_throughput"],2)<= 0.1)):
-                j.assign_subcluster(subcluster, assign_info=comp_a[0], bw=bw)
+                avail_bw = bw/(run_dev+comp_a[0]["splits"])
+                j.assign_subcluster(subcluster, assign_info=comp_a[0], bw=avail_bw)
                 t_flag=1
             else:
-                j.assign_subcluster(subcluster, assign_info=comm_a[0], bw=bw)
+                avail_bw = bw/(run_dev+comm_a[0]["splits"])
+                j.assign_subcluster(subcluster, assign_info=comm_a[0], bw=avail_bw)
                 t_flag=2
         end_sched_time = time.time()
         print([ [str(i) for i in d.tasks ] for d in subcluster.devices])
-        print("full device picture", [ [ [f"{i} {i.task_remaining_time}"] for i in d.tasks ] for d in subcluster.devices])
+        print("full device picture", [ [ [f"{i} {i.task_remaining_time} {i.peak_bw}"] for i in d.tasks ] for d in subcluster.devices])
         # raise Exception("end it here for now")
         #final job times and impact throughout the system
         # print([ [ f"{t}, {t.task_wait}, {t.run_time}, {t.task_remaining_time}" for t in l.tasks ] for l in job_array_list])
@@ -1105,7 +1143,7 @@ if __name__=="__main__":
         for d in subcluster.devices:
             for t in d.tasks:
                 devs_used = '.'.join([ d_t.device.device_name for d_t in t.job.tasks])
-                t_str = f"{u},{avail_bw/len(t.job.tasks)},{len(t.job.tasks)},{t.job.bs},{t.job.bn},{t.id},{t.task_arrival},{t.task_wait},{t.run_time},{t.task_remaining_time},{ 'c' if t_flag==1 else 'nw' },{end_sched_time-start_sched_time},{dev_util_per},{devs_used}\n"
+                t_str = f"{u},{t.peak_bw},{len(t.job.tasks)},{t.job.bs},{t.job.bn},{t.id},{t.task_arrival},{t.task_wait},{t.run_time},{t.task_remaining_time},{ 'c' if t_flag==1 else 'nw' },{end_sched_time-start_sched_time},{dev_util_per},{devs_used}\n"
                 csv_lines.append(t_str)
 
 
