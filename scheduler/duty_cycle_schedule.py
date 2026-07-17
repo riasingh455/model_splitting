@@ -6,6 +6,7 @@ import numpy as np
 from pathlib import Path
 from multiprocessing import Pool
 import json
+import random
 
 @dataclass
 class ModelSplitWrapper:
@@ -178,7 +179,7 @@ class Job:
             return sum([task.flop for task in self.tasks])
 
 
-    def multi_proc_func(self, subcluster:Subcluster, flag, bs, bn, bw, custom, lag_pri, k, leeway):
+    def multi_proc_func(self, subcluster:Subcluster, flag, bs, bn, bw, custom, lag_pri, k, leeway, fixed):
         # for bs in range(1, self.input_size+1):
         #     bn = np.ceil(self.input_size/bs)
         #     if bn*bs != self.input_size:
@@ -193,6 +194,10 @@ class Job:
         # full_bw = bw
         # print(f"currently available bw: {bw}")
         for splits in [3,4,5,6]:
+            if fixed!=0:
+                if splits!=fixed:
+                    continue
+
             # bw = full_bw/splits
         # for splits in [3]:
         # for splits in [3]:
@@ -246,20 +251,20 @@ class Job:
             temp_assign.append(info)
         temp_assign = sorted(temp_assign, key=lambda x: x["best_throughput"], reverse=True)
         best_entry = temp_assign[0]
-        for entry in temp_assign:
-            # if entry!=best_entry:
-            for k,v in entry["top_k"].items():
-                # if v[2]<best_entry["lag"] and (round(abs(v[2]-best_entry["lag"])/best_entry["lag"],2) >=0.1 and round(abs((v[0]+k)-best_entry["latency"])/best_entry["latency"],2)<=0.25):
-                if v[2]<best_entry["lag"] and round(abs((v[0]+k)-best_entry["latency"])/best_entry["latency"],2)<=0.1:
-                    new_th = round((entry["bs"]*entry["bn"])/(v[0]+k),2)
-                    best_entry["best_throughput"] = new_th
-                    best_entry["lag"] = v[2]
-                    best_entry["latency"] = v[0]+k
-                    best_entry["splits"] = entry["splits"]
-                    best_entry["tf"] = v[1]
-                    best_entry["best_runtime"] = v[0]
-                    best_entry["top_k"] = entry["top_k"]
-                    best_entry["wait"]=k
+        # for entry in temp_assign:
+        #     # if entry!=best_entry:
+        #     for k,v in entry["top_k"].items():
+        #         # if v[2]<best_entry["lag"] and (round(abs(v[2]-best_entry["lag"])/best_entry["lag"],2) >=0.1 and round(abs((v[0]+k)-best_entry["latency"])/best_entry["latency"],2)<=0.25):
+        #         if v[2]<best_entry["lag"] and round(abs((v[0]+k)-best_entry["latency"])/best_entry["latency"],2)<=0.1:
+        #             new_th = round((entry["bs"]*entry["bn"])/(v[0]+k),2)
+        #             best_entry["best_throughput"] = new_th
+        #             best_entry["lag"] = v[2]
+        #             best_entry["latency"] = v[0]+k
+        #             best_entry["splits"] = entry["splits"]
+        #             best_entry["tf"] = v[1]
+        #             best_entry["best_runtime"] = v[0]
+        #             best_entry["top_k"] = entry["top_k"]
+        #             best_entry["wait"]=k
         
 
         if leeway!=0:
@@ -284,7 +289,7 @@ class Job:
     #also use valid wait time list per batch size, batch num combo
     #long iterations but it's okay, after add to device and update all relevant tasks
     #add a tick_tock function either in Device or Subcluster
-    def cost_function_explorer(self, subcluster:Subcluster, flag="even", custom=None, bw=240, k=5, lag_pri=False, leeway=0):
+    def cost_function_explorer(self, subcluster:Subcluster, flag="even", custom=None, bw=240, k=5, lag_pri=False, leeway=0, fixed=0):
         assignment_info=[]
         #wait time, splits of tasks, bs, bn per iteration
         with Pool(processes=4) as pool:
@@ -294,7 +299,7 @@ class Job:
         #     if bn*bs != self.input_size:
         #         continue
             # assignment_info = pool.starmap(self.multi_proc_func, [ (subcluster,flag, bs, np.ceil(self.input_size/bs), bw, custom, lag_pri, k,) for bs in [1,2,5,10] if bs*np.ceil(self.input_size/bs)==self.input_size ])
-            assignment_info = pool.starmap(self.multi_proc_func, [ (subcluster,flag, bs, np.ceil(self.input_size/bs), bw, custom, lag_pri, k, leeway, ) for bs in [1] if bs*np.ceil(self.input_size/bs)==self.input_size ])
+            assignment_info = pool.starmap(self.multi_proc_func, [ (subcluster,flag, bs, np.ceil(self.input_size/bs), bw, custom, lag_pri, k, leeway, fixed, ) for bs in [1] if bs*np.ceil(self.input_size/bs)==self.input_size ])
         # self.multi_proc_func(flag, bw, custom, lag_pri, k)
         
         assignment_info = sorted(assignment_info, key=lambda x: x["best_throughput"], reverse=True)
@@ -411,21 +416,24 @@ class Subcluster:
                 sub.devices = [Device(sub, d.strip().split("-")[-1], 'ut', []) for d in tot_list]
                 return sub
             
-            for d in un_lines:
-                d=d.strip()
-                id = d.split("-")[-1]
-                dev = Device(sub, id, "ut", [])
-                sub.devices.append(dev)
-            for d in v_lines:
-                d=d.strip()
-                id = d.split("-")[-1]
-                dev = Device(sub, id, "v", [])
-                sub.devices.append(dev)
-            for d in t_lines:
-                d=d.strip()
-                id = d.split("-")[-1]
-                dev = Device(sub, id, "t", [])
-                sub.devices.append(dev)
+            tot_list = un_lines+v_lines+t_lines
+            sub.devices = [Device(sub, d.strip().split("-")[-1], 'v', []) for d in tot_list]
+            return sub
+            # for d in un_lines:
+            #     d=d.strip()
+            #     id = d.split("-")[-1]
+            #     dev = Device(sub, id, "ut", [])
+            #     sub.devices.append(dev)
+            # for d in v_lines:
+            #     d=d.strip()
+            #     id = d.split("-")[-1]
+            #     dev = Device(sub, id, "v", [])
+            #     sub.devices.append(dev)
+            # for d in t_lines:
+            #     d=d.strip()
+            #     id = d.split("-")[-1]
+            #     dev = Device(sub, id, "t", [])
+            #     sub.devices.append(dev)
         return sub
     
     def tick_tock(self, tick):
@@ -955,7 +963,8 @@ if __name__=="__main__":
     csv_writer = 0 if len(sys.argv)<8 else float(sys.argv[7])
     type_flag = "default_only" if len(sys.argv)<9 else sys.argv[8] 
     sched_flag = "uniform" if len(sys.argv)<10 else sys.argv[9] 
-    leeway = 0 if len(sys.argv)<11 else int(sys.argv[10]) 
+    leeway = 0 if len(sys.argv)<11 else int(sys.argv[10])
+    fixed = 0 if  len(sys.argv)<12 else int(sys.argv[11])
     subcluster:Subcluster = Subcluster.setup_subcluster(dummy, 0, 0, 10, bw, best=type_flag)
     # run_flag = 
     # print(subcluster.total_devs)
@@ -1017,7 +1026,7 @@ if __name__=="__main__":
                 # print(temp_time_arr)
                 # if temp_time_arr==1:
                 for stagger_ind in range(temp_time_arr):
-                    uniform_arrival_times.append(t_ind*60*0.01*inter_arrival_time+0.001*(stagger_ind+ga_ind))
+                    uniform_arrival_times.append(t_ind*60*0.1*inter_arrival_time+0.001*(stagger_ind+ga_ind))
                 # uniform_arrival_times.extend([t_ind*60*inter_arrival_time+0.001*ga_ind]*temp_time_arr)
 
                 # if len(uniform_arrival_times)>=job_nums:
@@ -1069,12 +1078,14 @@ if __name__=="__main__":
         uniform_arrival_times = [0]+np.cumsum(inter_arrival_times)
         diffs = np.diff(uniform_arrival_times)
         # print(np.mean(diffs))
-    print(len(uniform_arrival_times))
-    raise Exception("kys")
+    # print(len(uniform_arrival_times))
+    # raise Exception("kys")
     prev_time = uniform_arrival_times[0]
+    model_map = {"eff":2.5, "resnet18":20, "vit":20}
     # print(uniform_arrival_times, len(uniform_arrival_times))
     # raise Exception("stop right there")
     prev_u = 0
+    random.seed(3)
     for u_ind, u in enumerate(uniform_arrival_times):
         # print("full device picture b4", [ [ [f"{i} {i.task_remaining_time} {i.peak_bw}"] for i in d.tasks ] for d in subcluster.devices])
         active_devs = subcluster.tick_tock(u-prev_u)
@@ -1092,7 +1103,10 @@ if __name__=="__main__":
         #peak rate for eff is 3?
         #peak rate for resnet is -> 30
         #peak rate for vit somehow 15????
-        j = Job(f"j{u_ind}", u, 0, model_type, 10, pr, [] )
+        model_ = random.choice(["resnet18","eff","vit"])
+        # print(model_type)
+        pr = model_map[model_]
+        j = Job(f"j{u_ind}", u, 0, model_, 10, pr, [] )
         job_array_list.append(j)
         start_sched_time = time.time()
         # avail_bw = bw/(active_devs)
@@ -1101,7 +1115,7 @@ if __name__=="__main__":
             comp_a = [{"best_throughput":0, "splits":np.inf}]
         else:
             s=time.time()
-            comp_a = j.cost_function_explorer(subcluster, flag="even", bw=bw, leeway=leeway)
+            comp_a = j.cost_function_explorer(subcluster, flag="even", bw=bw, leeway=leeway, fixed=fixed)
             print(comp_a[0])
             print(time.time() - s)
         print()
@@ -1109,7 +1123,7 @@ if __name__=="__main__":
             comm_a = [{"best_throughput":0, "splits":np.inf}]
         else:
             s=time.time()
-            comm_a = j.cost_function_explorer(subcluster, flag="comm", bw=bw, leeway=leeway)
+            comm_a = j.cost_function_explorer(subcluster, flag="comm", bw=bw, leeway=leeway, fixed=fixed)
             print(comm_a[0])
             print(time.time() - s)
         
@@ -1143,7 +1157,7 @@ if __name__=="__main__":
         for d in subcluster.devices:
             for t in d.tasks:
                 devs_used = '.'.join([ d_t.device.device_name for d_t in t.job.tasks])
-                t_str = f"{u},{t.peak_bw},{len(t.job.tasks)},{t.job.bs},{t.job.bn},{t.id},{t.task_arrival},{t.task_wait},{t.run_time},{t.task_remaining_time},{ 'c' if t_flag==1 else 'nw' },{end_sched_time-start_sched_time},{dev_util_per},{devs_used}\n"
+                t_str = f"{u},{model_},{t.peak_bw},{len(t.job.tasks)},{t.job.bs},{t.job.bn},{t.id},{t.task_arrival},{t.task_wait},{t.run_time},{t.task_remaining_time},{ 'c' if t_flag==1 else 'nw' },{end_sched_time-start_sched_time},{dev_util_per},{devs_used}\n"
                 csv_lines.append(t_str)
 
 
@@ -1206,34 +1220,34 @@ if __name__=="__main__":
         write_file.writelines(template_lines)
         write_file.close()
     if csv_writer==1:
-        csv_header="clock,bw,world,bs,bn,task_id,task_arrival,task_wait,run_time,task_remaining_time,type,time_to_sched,util,devs_used\n"
+        csv_header="clock,model,bw,world,bs,bn,task_id,task_arrival,task_wait,run_time,task_remaining_time,type,time_to_sched,util,devs_used\n"
         if type_flag=="comp_only":
             # simulation_f = open(f"sim.op.{dummy}.{model_type}.{bw}.{inter_arrival_time}.only_comp.{sched_flag}", "w")
-            simulation_f = open(f"sim.op.{dummy}.{model_type}.{bw}.{inter_arrival_time}.only_comp.{sched_flag}.duty_cycle.{'leeway' if leeway!=0 else 'no_leeway'}", "w")
+            simulation_f = open(f"sim.op.{dummy}.{model_type}.{bw}.{inter_arrival_time}.only_comp.{sched_flag}.duty_cycle.{'leeway' if leeway!=0 else 'no_leeway'}{f'.fixed.{fixed}' if fixed!=0 else ''}", "w")
             simulation_f.write(csv_header)
             simulation_f.writelines(full_lines)
             simulation_f.close()
         elif type_flag=="comm_only":
             # simulation_f = open(f"sim.op.{dummy}.{model_type}.{bw}.{inter_arrival_time}.only_comm.{sched_flag}", "w")
-            simulation_f = open(f"sim.op.{dummy}.{model_type}.{bw}.{inter_arrival_time}.only_comm.{sched_flag}.duty_cycle.{'leeway' if leeway!=0 else 'no_leeway'}", "w")
+            simulation_f = open(f"sim.op.{dummy}.{model_type}.{bw}.{inter_arrival_time}.only_comm.{sched_flag}.duty_cycle.{'leeway' if leeway!=0 else 'no_leeway'}{f'.fixed.{fixed}' if fixed!=0 else ''}", "w")
             simulation_f.write(csv_header)
             simulation_f.writelines(full_lines)
             simulation_f.close()
         elif type_flag=="best_only":
             # simulation_f = open(f"sim.op.{dummy}.{model_type}.{bw}.{inter_arrival_time}.only_best.{sched_flag}", "w")
-            simulation_f = open(f"sim.op.{dummy}.{model_type}.{bw}.{inter_arrival_time}.only_best.{sched_flag}.duty_cycle.{'leeway' if leeway!=0 else 'no_leeway'}", "w")
+            simulation_f = open(f"sim.op.{dummy}.{model_type}.{bw}.{inter_arrival_time}.only_best.{sched_flag}.duty_cycle.{'leeway' if leeway!=0 else 'no_leeway'}{f'.fixed.{fixed}' if fixed!=0 else ''}", "w")
             simulation_f.write(csv_header)
             simulation_f.writelines(full_lines)
             simulation_f.close()
         elif type_flag=="best_limit_only":
             # simulation_f = open(f"sim.op.{dummy}.{model_type}.{bw}.{inter_arrival_time}.only_best_limit.{sched_flag}", "w")
-            simulation_f = open(f"sim.op.{dummy}.{model_type}.{bw}.{inter_arrival_time}.only_best_limit.{sched_flag}.duty_cycle.{'leeway' if leeway!=0 else 'no_leeway'}", "w")
+            simulation_f = open(f"sim.op.{dummy}.{model_type}.{bw}.{inter_arrival_time}.only_best_limit.{sched_flag}.duty_cycle.{'leeway' if leeway!=0 else 'no_leeway'}{f'.fixed.{fixed}' if fixed!=0 else ''}", "w")
             simulation_f.write(csv_header)
             simulation_f.writelines(full_lines)
             simulation_f.close()
         else:
             # simulation_f = open(f"sim.op.{dummy}.{model_type}.{bw}.{inter_arrival_time}.{sched_flag}", "w")
-            simulation_f = open(f"sim.op.{dummy}.{model_type}.{bw}.{inter_arrival_time}.{sched_flag}.duty_cycle.{'leeway' if leeway!=0 else 'no_leeway'}", "w")
+            simulation_f = open(f"sim.op.{dummy}.{model_type}.{bw}.{inter_arrival_time}.{sched_flag}.duty_cycle.{'leeway' if leeway!=0 else 'no_leeway'}{f'.fixed.{fixed}' if fixed!=0 else ''}", "w")
             # simulation_f = open(f"sim.op.{dummy}.{model_type}.mixed.{inter_arrival_time}.{sched_flag}.duty_cycle.{'leeway' if leeway!=0 else 'no_leeway'}", "w")
             simulation_f.write(csv_header)
             simulation_f.writelines(full_lines)
